@@ -3,6 +3,7 @@ import type { ParentSnapshot } from "#src/lifecycle/parent-snapshot";
 import type { AgentSpawnConfig } from "#src/lifecycle/subagent-manager";
 import {
   buildDetails,
+  buildResumeHint,
   formatLifetimeTokens,
   getStatusNote,
   textResult,
@@ -125,7 +126,12 @@ export async function runForeground(
   if (tokenText) statsParts.push(tokenText);
   return textResult(
     `${fallbackNote}Agent completed in ${formatMs(durationMs)} (${statsParts.join(", ")})${getStatusNote(record.status)}.\n\n` +
-      (record.result?.trim() ?? "No output."),
+      (record.result?.trim() ?? "No output.") +
+      buildResumeHint(record.status, {
+        id: record.id,
+        subagentType: identity.subagentType,
+        description: execution.description,
+      }),
     details,
   );
 }

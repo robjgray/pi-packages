@@ -16,6 +16,39 @@ export function getStatusNote(status: string): string {
   }
 }
 
+/**
+ * Build the resume-call hint appended to a foreground subagent's result text
+ * when the run ended on a turn limit (`steered` or `aborted`). Returns "" for
+ * any other terminal status, so callers can append it unconditionally — the
+ * same return-on-non-match contract as {@link getStatusNote}.
+ *
+ * The hint gives the parent agent the exact `subagent({ resume, … })` call to
+ * continue the subagent from where it stopped, so a turn-limit cut-off is
+ * resolved by resuming rather than redoing the work. String fields are emitted
+ * as JSON string literals via JSON.stringify, so quotes/newlines in the
+ * description survive verbatim without a hand-rolled escaper.
+ */
+export function buildResumeHint(
+  status: string,
+  agent: { id: string; subagentType: string; description: string },
+): string {
+  if (status !== "steered" && status !== "aborted") return "";
+  const { id, subagentType, description } = agent;
+  return "\n\n" + [
+    "---",
+    "The subagent was stopped by its turn limit — it is not finished and not failed. To continue it from where it left off, call subagent again:",
+    "",
+    "subagent({",
+    `  resume: ${JSON.stringify(id)},`,
+    `  subagent_type: ${JSON.stringify(subagentType)},`,
+    `  description: ${JSON.stringify(description)},`,
+    `  prompt: ${JSON.stringify("Continue from where you stopped and complete the task.")}`,
+    "})",
+    "",
+    "Do not redo the subagent's work yourself — resume it.",
+  ].join("\n");
+}
+
 /** Build AgentDetails from a base + record-specific fields. */
 export function buildDetails(
   base: Pick<AgentDetails, "displayName" | "description" | "subagentType" | "modelName" | "tags">,

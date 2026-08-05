@@ -87,6 +87,26 @@ describe("runForeground", () => {
 		expect(result.content[0].text).toContain('Unknown agent type "unknown-type"');
 	});
 
+	it("appends a resume hint containing the agent id when the run hit a turn limit", async () => {
+		const record = createTestSubagent({ id: "agent-99", status: "steered", result: "partial work" });
+		const deps = createToolDeps({
+			manager: { ...createToolDeps().manager, spawnAndWait: vi.fn().mockResolvedValue(record) },
+		});
+		const result = await runForeground(deps.manager, makeParams(), undefined, undefined);
+		// Wiring contract: the runner threads record.status and record.id into the
+		// hint. Asserting the id (not prose) keeps this stable across wording edits.
+		expect(result.content[0].text).toContain(JSON.stringify("agent-99"));
+		expect(result.content[0].text).toContain("resume");
+	});
+
+	it("does not append a resume hint on normal completion", async () => {
+		const { manager } = createToolDeps();
+		const result = await runForeground(manager, makeParams(), undefined, undefined);
+		// Proves the runner threads record.status for the non-turn-limit case — a
+		// unit test on buildResumeHint cannot catch a runner that hardcodes "steered".
+		expect(result.content[0].text).not.toContain("resume");
+	});
+
 	it("calls onUpdate with streaming details while running", async () => {
 		let resolve!: (r: any) => void;
 		const promise = new Promise<any>((res) => { resolve = res; });

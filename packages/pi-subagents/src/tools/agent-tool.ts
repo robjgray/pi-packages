@@ -186,13 +186,6 @@ ${guidelines}
 							"Thinking level: off, minimal, low, medium, high, xhigh. Overrides agent default.",
 					}),
 				),
-				max_turns: Type.Optional(
-					Type.Number({
-						description:
-							"Maximum number of agentic turns before stopping. Omit for unlimited (default).",
-						minimum: 1,
-					}),
-				),
 				run_in_background: Type.Optional(
 					Type.Boolean({
 						description:

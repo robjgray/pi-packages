@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TypeListRegistry } from "#src/tools/helpers";
-import { buildAgentGuidelines, buildDetails, buildTypeListText, formatLifetimeTokens, getModelLabelFromConfig, getStatusNote, textResult } from "#src/tools/helpers";
+import { buildAgentGuidelines, buildDetails, buildResumeHint, buildTypeListText, formatLifetimeTokens, getModelLabelFromConfig, getStatusNote, textResult } from "#src/tools/helpers";
 import type { AgentDetails } from "#src/ui/display";
 import { createTestSubagent } from "#test/helpers/make-subagent";
 
@@ -247,6 +247,42 @@ describe("getStatusNote", () => {
 
   it("returns empty string for unknown status", () => {
     expect(getStatusNote("error")).toBe("");
+  });
+});
+
+describe("buildResumeHint", () => {
+  const agent = { id: "agent-42", subagentType: "general-purpose", description: "Implement the thing" };
+
+  // The contract worth pinning: which statuses trigger the hint, that the id
+  // (the actionable handle) is present, that the call carries the tool's
+  // schema-required field names, and that embedded values are JSON-safe.
+  // Exact prose is intentionally not asserted so wording can evolve freely.
+
+  it("returns empty string for non-turn-limit statuses", () => {
+    for (const status of ["completed", "error", "stopped", "running", "queued"]) {
+      expect(buildResumeHint(status, agent)).toBe("");
+    }
+  });
+
+  it("emits a schema-valid resume call containing the agent id for steered and aborted", () => {
+    for (const status of ["steered", "aborted"]) {
+      const hint = buildResumeHint(status, agent);
+      // The id is the only value that makes resume actionable — it must
+      // appear, quoted, so the parent can copy the call verbatim.
+      expect(hint).toContain(JSON.stringify(agent.id));
+      // Field names are the tool's API contract, not prose — a rename here
+      // must break the test, since the hint is only useful if it validates.
+      for (const field of ["resume", "subagent_type", "description", "prompt"]) {
+        expect(hint).toContain(field);
+      }
+    }
+  });
+
+  it("JSON-escapes embedded values so quotes/newlines/backslashes survive verbatim", () => {
+    const description = 'a "quoted"\nline\\path';
+    const hint = buildResumeHint("steered", { ...agent, description });
+    // The description must appear as its JSON-literal form, not raw text.
+    expect(hint).toContain(JSON.stringify(description));
   });
 });
 
