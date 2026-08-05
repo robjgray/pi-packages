@@ -32,7 +32,7 @@
  */
 
 /** Minimal content-block shape the injector observes. */
-export interface InjectableContent {
+interface InjectableContent {
   type: string;
   text?: string;
 }
@@ -81,15 +81,6 @@ export function injectPreface<T extends InjectableMessage>(
       : target.content
         ? [...target.content]
         : [];
-
-  // Idempotence: the block is already first.
-  if (
-    existing.length > 0 &&
-    existing[0]?.type === "text" &&
-    existing[0]?.text === block
-  ) {
-    return messages;
-  }
 
   // We preserve the element type `T` by spreading the original message and
   // replacing only `content`. The structural constraint means the new content

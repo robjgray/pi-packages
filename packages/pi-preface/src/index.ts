@@ -21,7 +21,7 @@
  */
 
 import { type ExtensionAPI, getAgentDir } from "@earendil-works/pi-coding-agent";
-import { composePrefaceBlock } from "#src/content";
+import { composePrefaceBlock, prefaceFooterText } from "#src/content";
 import { injectPreface } from "#src/inject";
 import { PrefaceSettings } from "#src/settings";
 
@@ -40,19 +40,11 @@ export default function (pi: ExtensionAPI): void {
   pi.on("context", (event, ctx) => {
     const block = composePrefaceBlock(settings.content);
     if (!block) return; // nothing configured — leave the context and footer untouched
-    ctx.ui.setStatus(STATUS_KEY, footerText(settings.globalPath, settings.projectPath));
+    ctx.ui.setStatus(STATUS_KEY, prefaceFooterText(settings.globalPath, settings.projectPath));
     return { messages: injectPreface(event.messages, block) };
   });
 
   pi.on("agent_settled", (_event, ctx) => {
     ctx.ui.setStatus(STATUS_KEY, undefined);
   });
-}
-
-/** Single footer line naming each contributing file by layer, absolute paths. */
-function footerText(globalPath: string | undefined, projectPath: string | undefined): string {
-  const parts: string[] = [];
-  if (globalPath) parts.push(`Preface (Global): ${globalPath}`);
-  if (projectPath) parts.push(`Preface (Project): ${projectPath}`);
-  return parts.join("  ");
 }

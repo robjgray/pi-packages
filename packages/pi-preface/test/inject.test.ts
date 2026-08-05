@@ -62,20 +62,7 @@ describe("injectPreface", () => {
     });
   });
 
-  describe("idempotence and non-mutation", () => {
-    it("does not double-inject when the block is already first", () => {
-      const messages: InjectableMessage[] = [
-        {
-          role: "user",
-          content: [
-            { type: "text", text: BLOCK },
-            { type: "text", text: "original" },
-          ],
-        },
-      ];
-      expect(injectPreface(messages, BLOCK)).toBe(messages);
-    });
-
+  describe("non-mutation and edge cases", () => {
     it("does not mutate the input array or its messages", () => {
       const messages: InjectableMessage[] = [
         { role: "user", content: "original" },
@@ -83,6 +70,11 @@ describe("injectPreface", () => {
       const originalSnapshot = JSON.stringify(messages);
       injectPreface(messages, BLOCK);
       expect(JSON.stringify(messages)).toBe(originalSnapshot);
+    });
+
+    it("treats a user message with no content as empty (prepends only the block)", () => {
+      const out = injectPreface([{ role: "user" }] as InjectableMessage[], BLOCK);
+      expect(out[0].content).toEqual([{ type: "text", text: BLOCK }]);
     });
   });
 });

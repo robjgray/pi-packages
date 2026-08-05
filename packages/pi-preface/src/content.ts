@@ -25,6 +25,18 @@ export function composePrefaceBlock(content: string): string {
 }
 
 /**
+ * Compose the single footer status line naming each contributing file by layer.
+ * Pure — lives here with the other pure string composition so `index.ts` stays
+ * wiring-only. Paths are emitted verbatim (absolute), only the layers present.
+ */
+export function prefaceFooterText(globalPath: string | undefined, projectPath: string | undefined): string {
+  const parts: string[] = [];
+  if (globalPath) parts.push(`Preface (Global): ${globalPath}`);
+  if (projectPath) parts.push(`Preface (Project): ${projectPath}`);
+  return parts.join("  ");
+}
+
+/**
  * Truncate to a UTF-8 byte limit on a character boundary, so a multibyte
  * sequence is never split. O(n) and Web-API-only (no Node `Buffer`), keeping
  * the module portable across Node and Bun runtimes.

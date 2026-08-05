@@ -72,7 +72,13 @@ export class PrefaceSettings {
 function readTextFile(path: string): string {
   try {
     return readFileSync(path, "utf-8");
-  } catch {
+  } catch (err) {
+    // ENOENT is the expected "no file configured" case — silent. Anything else
+    // (permissions, encoding, EISDIR) would silently no-op the extension, so
+    // warn so the user can diagnose it instead of guessing why preface is off.
+    if ((err as NodeJS.ErrnoException | undefined)?.code !== "ENOENT") {
+      console.warn(`pi-preface: could not read ${path}: ${(err as Error).message}`);
+    }
     return "";
   }
 }

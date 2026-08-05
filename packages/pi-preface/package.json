@@ -44,11 +44,12 @@
     "node": ">=22"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.4.16",
+    "@biomejs/biome": "catalog:",
     "@earendil-works/pi-coding-agent": "0.80.5",
-    "rumdl": "^0.2.10",
-    "typescript": "^6.0.3",
-    "vitest": "^4.1.8"
+    "@types/node": "catalog:",
+    "rumdl": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
   },
   "scripts": {
     "check": "tsc --noEmit",
