@@ -26,17 +26,35 @@ const PREFACE_FILENAME = "preface.md";
 
 export class PrefaceSettings {
   private _content = "";
+  private _sources: string[] = [];
 
   get content(): string {
     return this._content;
   }
 
+  /** Absolute paths that contributed non-empty content, global first then project. */
+  get sources(): string[] {
+    return this._sources;
+  }
+
   /** Read global + project files and cache the concatenation. Safe to call on every session_start. */
   load(cwd: string, agentDir: string): void {
-    const globalText = readTextFile(join(agentDir, PREFACE_FILENAME));
-    const projectText = readTextFile(join(cwd, ".pi", PREFACE_FILENAME));
-    const parts = [globalText, projectText].filter((t) => t.trim().length > 0);
+    const globalPath = join(agentDir, PREFACE_FILENAME);
+    const projectPath = join(cwd, ".pi", PREFACE_FILENAME);
+    const globalText = readTextFile(globalPath);
+    const projectText = readTextFile(projectPath);
+    const sources: string[] = [];
+    const parts: string[] = [];
+    if (globalText.trim()) {
+      sources.push(globalPath);
+      parts.push(globalText);
+    }
+    if (projectText.trim()) {
+      sources.push(projectPath);
+      parts.push(projectText);
+    }
     this._content = parts.join("\n\n");
+    this._sources = sources;
   }
 }
 

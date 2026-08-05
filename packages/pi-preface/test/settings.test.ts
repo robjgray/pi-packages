@@ -63,4 +63,19 @@ describe("PrefaceSettings", () => {
     s.load(cwd, agentDir);
     expect(s.content).toBe("v2");
   });
+
+  it("tracks contributing paths in `sources` (global first, then project)", () => {
+    writeFileSync(join(agentDir, "preface.md"), "global");
+    writeFileSync(join(cwd, ".pi", "preface.md"), "project");
+    const s = new PrefaceSettings();
+    s.load(cwd, agentDir);
+    expect(s.sources).toEqual([join(agentDir, "preface.md"), join(cwd, ".pi", "preface.md")]);
+  });
+
+  it("omits absent/empty files from `sources`", () => {
+    writeFileSync(join(cwd, ".pi", "preface.md"), "project");
+    const s = new PrefaceSettings();
+    s.load(cwd, agentDir);
+    expect(s.sources).toEqual([join(cwd, ".pi", "preface.md")]);
+  });
 });
