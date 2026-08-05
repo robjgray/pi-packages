@@ -1,24 +1,24 @@
 import { describe, expect, it } from "vitest";
 import {
-  composeForemostBlock,
-  FOREMOST_TAG,
+  composePrefaceBlock,
   MAX_BYTES,
+  PREFACE_TAG,
   truncateUtf8,
 } from "#src/content";
 
-describe("composeForemostBlock", () => {
+describe("composePrefaceBlock", () => {
   it("returns empty string for empty or whitespace-only content", () => {
-    expect(composeForemostBlock("")).toBe("");
-    expect(composeForemostBlock("   \n\t  \n")).toBe("");
+    expect(composePrefaceBlock("")).toBe("");
+    expect(composePrefaceBlock("   \n\t  \n")).toBe("");
   });
 
-  it("wraps trimmed content in the foremost tag", () => {
-    const block = composeForemostBlock("  be careful  ");
-    expect(block).toBe(`<${FOREMOST_TAG}>\nbe careful\n</${FOREMOST_TAG}>`);
+  it("wraps trimmed content in the preface tag", () => {
+    const block = composePrefaceBlock("  be careful  ");
+    expect(block).toBe(`<${PREFACE_TAG}>\nbe careful\n</${PREFACE_TAG}>`);
   });
 
   it("preserves inner whitespace and newlines", () => {
-    const block = composeForemostBlock("line one\nline two");
+    const block = composePrefaceBlock("line one\nline two");
     expect(block).toContain("line one\nline two");
   });
 });

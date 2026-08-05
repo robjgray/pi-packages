@@ -3,8 +3,8 @@
  *
  * The `context` extension event fires before every LLM call (turn start and
  * between every tool round) and its result is transient — it shapes what the
- * provider sees, never the persisted transcript. `injectForemost` is the pure
- * transform: prepend a `<foremost>` text block to the latest agent-visible
+ * provider sees, never the persisted transcript. `injectPreface` is the pure
+ * transform: prepend a `<preface>` text block to the latest agent-visible
  * user-side message, whatever its role.
  *
  * Why "latest message, whatever its role" rather than appending a new user
@@ -22,7 +22,7 @@
  *                              message (end of the last user turn, clean);
  *                              OpenAI-completions prefixes it onto the last
  *                              `tool` message's text (top-of-attention; the
- *                              `<foremost>` tag signals "meta, not tool
+ *                              `<preface>` tag signals "meta, not tool
  *                              output").
  *
  * The function is generic in the element type so the real `AgentMessage[]`
@@ -59,7 +59,7 @@ const USER_SIDE_ROLES = new Set(["user", "toolResult"]);
  * - Non-mutating: returns a new array with one replaced element; the input is
  *   never modified.
  */
-export function injectForemost<T extends InjectableMessage>(
+export function injectPreface<T extends InjectableMessage>(
   messages: T[],
   block: string,
 ): T[] {

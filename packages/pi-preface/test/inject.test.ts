@@ -1,17 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { type InjectableMessage, injectForemost } from "#src/inject";
+import { type InjectableMessage, injectPreface } from "#src/inject";
 
-const BLOCK = "<foremost>\nbe careful\n</foremost>";
+const BLOCK = "<preface>\nbe careful\n</preface>";
 
-describe("injectForemost", () => {
+describe("injectPreface", () => {
   describe("gating", () => {
     it("is a no-op when the block is empty", () => {
       const messages: InjectableMessage[] = [{ role: "user", content: "hi" }];
-      expect(injectForemost(messages, "")).toBe(messages);
+      expect(injectPreface(messages, "")).toBe(messages);
     });
 
     it("is a no-op when messages is empty", () => {
-      expect(injectForemost([], BLOCK)).toEqual([]);
+      expect(injectPreface([], BLOCK)).toEqual([]);
     });
 
     it("is a no-op when the latest message is not user-side (e.g. an assistant turn)", () => {
@@ -20,7 +20,7 @@ describe("injectForemost", () => {
         { role: "assistant", content: [{ type: "text", text: "hello" }] },
       ];
       // Latest is assistant — don't reach back and rewrite the earlier user turn.
-      expect(injectForemost(messages, BLOCK)).toBe(messages);
+      expect(injectPreface(messages, BLOCK)).toBe(messages);
     });
   });
 
@@ -29,7 +29,7 @@ describe("injectForemost", () => {
       const messages: InjectableMessage[] = [
         { role: "user", content: "do the thing" },
       ];
-      const out = injectForemost(messages, BLOCK);
+      const out = injectPreface(messages, BLOCK);
       expect(Array.isArray(out[0].content)).toBe(true);
       const arr = out[0].content as { type: string; text?: string }[];
       expect(arr[0]).toEqual({ type: "text", text: BLOCK });
@@ -40,7 +40,7 @@ describe("injectForemost", () => {
       const messages: InjectableMessage[] = [
         { role: "user", content: [{ type: "text", text: "original" }] },
       ];
-      const out = injectForemost(messages, BLOCK);
+      const out = injectPreface(messages, BLOCK);
       const arr = out[0].content as { type: string; text?: string }[];
       expect(arr[0]).toEqual({ type: "text", text: BLOCK });
       expect(arr[1]).toEqual({ type: "text", text: "original" });
@@ -52,7 +52,7 @@ describe("injectForemost", () => {
         { role: "assistant", content: [{ type: "toolCall" }] },
         { role: "toolResult", content: [{ type: "text", text: "result" }] },
       ];
-      const out = injectForemost(messages, BLOCK);
+      const out = injectPreface(messages, BLOCK);
       // Only the last (toolResult) message is touched.
       expect(out[0]).toBe(messages[0]);
       expect(out[1]).toBe(messages[1]);
@@ -73,7 +73,7 @@ describe("injectForemost", () => {
           ],
         },
       ];
-      expect(injectForemost(messages, BLOCK)).toBe(messages);
+      expect(injectPreface(messages, BLOCK)).toBe(messages);
     });
 
     it("does not mutate the input array or its messages", () => {
@@ -81,7 +81,7 @@ describe("injectForemost", () => {
         { role: "user", content: "original" },
       ];
       const originalSnapshot = JSON.stringify(messages);
-      injectForemost(messages, BLOCK);
+      injectPreface(messages, BLOCK);
       expect(JSON.stringify(messages)).toBe(originalSnapshot);
     });
   });

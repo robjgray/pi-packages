@@ -1,11 +1,11 @@
 /**
- * settings.ts — Layered loader for the foremost content files.
+ * settings.ts — Layered loader for the preface content files.
  *
  * Mirrors pi's layered config convention (global provides a baseline, project
  * adds project-specific context), but for free-form markdown rather than JSON:
  *
- *   1. Global:    `<agentDir>/foremost.md`   (~/.pi/agent/foremost.md)
- *   2. Project:   `<cwd>/.pi/foremost.md`
+ *   1. Global:    `<agentDir>/preface.md`   (~/.pi/agent/preface.md)
+ *   2. Project:   `<cwd>/.pi/preface.md`
  *
  * The two are concatenated (global first, then project, separated by a blank
  * line) so a project *adds* reminders without losing the global baseline. A
@@ -22,9 +22,9 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-const FOREMOST_FILENAME = "foremost.md";
+const PREFACE_FILENAME = "preface.md";
 
-export class ForemostSettings {
+export class PrefaceSettings {
   private _content = "";
 
   get content(): string {
@@ -33,8 +33,8 @@ export class ForemostSettings {
 
   /** Read global + project files and cache the concatenation. Safe to call on every session_start. */
   load(cwd: string, agentDir: string): void {
-    const globalText = readTextFile(join(agentDir, FOREMOST_FILENAME));
-    const projectText = readTextFile(join(cwd, ".pi", FOREMOST_FILENAME));
+    const globalText = readTextFile(join(agentDir, PREFACE_FILENAME));
+    const projectText = readTextFile(join(cwd, ".pi", PREFACE_FILENAME));
     const parts = [globalText, projectText].filter((t) => t.trim().length > 0);
     this._content = parts.join("\n\n");
   }

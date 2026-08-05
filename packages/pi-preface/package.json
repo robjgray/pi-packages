@@ -1,5 +1,5 @@
 {
-  "name": "@gotgenes/pi-foremost",
+  "name": "@gotgenes/pi-preface",
   "version": "0.1.0",
   "type": "module",
   "exports": {
@@ -19,16 +19,16 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/gotgenes/pi-packages.git",
-    "directory": "packages/pi-foremost"
+    "directory": "packages/pi-preface"
   },
-  "homepage": "https://github.com/gotgenes/pi-packages/tree/main/packages/pi-foremost#readme",
+  "homepage": "https://github.com/gotgenes/pi-packages/tree/main/packages/pi-preface#readme",
   "bugs": {
     "url": "https://github.com/gotgenes/pi-packages/issues"
   },
   "keywords": [
     "pi-package",
     "pi-extension",
-    "foremost",
+    "preface",
     "top-of-mind",
     "context"
   ],

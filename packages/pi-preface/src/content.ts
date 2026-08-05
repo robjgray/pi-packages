@@ -1,12 +1,12 @@
 /**
- * content.ts — Pure composition of the `<foremost>` injection block.
+ * content.ts — Pure composition of the `<preface>` injection block.
  *
  * Extracted so the shaping policy (tag, size cap, empty-handling) has a focused
  * home independent of IO (`settings.ts`) and message mechanics (`inject.ts`).
  * The 64 KB cap and UTF-8-safe truncation mirror goose's `tom` extension.
  */
 
-export const FOREMOST_TAG = "foremost";
+export const PREFACE_TAG = "preface";
 
 /** Maximum byte length of the injected body, matching goose's tom cap. */
 export const MAX_BYTES = 65_536;
@@ -15,13 +15,13 @@ const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
 /**
- * Compose the `<foremost>` block from raw content. Returns `""` when the content
+ * Compose the `<preface>` block from raw content. Returns `""` when the content
  * is empty or whitespace-only, so callers can treat a falsy result as "no-op".
  */
-export function composeForemostBlock(content: string): string {
+export function composePrefaceBlock(content: string): string {
   const trimmed = content.trim();
   if (!trimmed) return "";
-  return `<${FOREMOST_TAG}>\n${truncateUtf8(trimmed, MAX_BYTES)}\n</${FOREMOST_TAG}>`;
+  return `<${PREFACE_TAG}>\n${truncateUtf8(trimmed, MAX_BYTES)}\n</${PREFACE_TAG}>`;
 }
 
 /**

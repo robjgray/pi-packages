@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Canonical vi.hoisted pattern: the mock factory closes over a hoisted vi.fn,
 // which tests configure per-case with a temp agent dir. Keeps the test hermetic
-// (no reliance on the real ~/.pi/agent/foremost.md).
+// (no reliance on the real ~/.pi/agent/preface.md).
 const mockGetAgentDir = vi.hoisted(() => vi.fn());
 vi.mock("@earendil-works/pi-coding-agent", () => ({
   getAgentDir: mockGetAgentDir,
@@ -27,19 +27,19 @@ function makePi(): {
   return { pi, handlers };
 }
 
-describe("foremost extension wiring", () => {
+describe("preface extension wiring", () => {
   let agentDir: string;
   let cwd: string;
 
   beforeEach(() => {
-    agentDir = mkdtempSync(join(tmpdir(), "foremost-idx-agent-"));
-    cwd = mkdtempSync(join(tmpdir(), "foremost-idx-cwd-"));
+    agentDir = mkdtempSync(join(tmpdir(), "preface-idx-agent-"));
+    cwd = mkdtempSync(join(tmpdir(), "preface-idx-cwd-"));
     mkdirSync(join(cwd, ".pi"), { recursive: true });
     mockGetAgentDir.mockReturnValue(agentDir);
   });
 
   it("injects the block on `context` after `session_start` loads the content", () => {
-    writeFileSync(join(cwd, ".pi", "foremost.md"), "stay sharp");
+    writeFileSync(join(cwd, ".pi", "preface.md"), "stay sharp");
     const { pi, handlers } = makePi();
     factory(pi);
 
@@ -55,13 +55,13 @@ describe("foremost extension wiring", () => {
     const arr = result.messages[0].content as { type: string; text?: string }[];
     expect(arr[0]).toEqual({
       type: "text",
-      text: "<foremost>\nstay sharp\n</foremost>",
+      text: "<preface>\nstay sharp\n</preface>",
     });
     expect(arr[1]).toEqual({ type: "text", text: "hi" });
   });
 
   it("is a no-op on `context` when no content is configured", () => {
-    // No foremost.md in either layer.
+    // No preface.md in either layer.
     const { pi, handlers } = makePi();
     factory(pi);
 
@@ -89,7 +89,7 @@ describe("foremost extension wiring", () => {
       }),
     ).toBeUndefined();
 
-    writeFileSync(join(cwd, ".pi", "foremost.md"), "now configured");
+    writeFileSync(join(cwd, ".pi", "preface.md"), "now configured");
     handlers.session_start(
       { type: "session_start", reason: "reload" },
       { cwd },
@@ -103,7 +103,7 @@ describe("foremost extension wiring", () => {
     const arr = result.messages[0].content as { type: string; text?: string }[];
     expect(arr[0]).toEqual({
       type: "text",
-      text: "<foremost>\nnow configured\n</foremost>",
+      text: "<preface>\nnow configured\n</preface>",
     });
   });
 });
