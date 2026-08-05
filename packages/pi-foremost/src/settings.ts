@@ -1,0 +1,50 @@
+/**
+ * settings.ts — Layered loader for the foremost content files.
+ *
+ * Mirrors pi's layered config convention (global provides a baseline, project
+ * adds project-specific context), but for free-form markdown rather than JSON:
+ *
+ *   1. Global:    `<agentDir>/foremost.md`   (~/.pi/agent/foremost.md)
+ *   2. Project:   `<cwd>/.pi/foremost.md`
+ *
+ * The two are concatenated (global first, then project, separated by a blank
+ * line) so a project *adds* reminders without losing the global baseline. A
+ * missing file is silent (`""`); a read error is silent too, so a malformed
+ * permissions state never blocks startup. When both are absent/empty,
+ * `content` is `""` and the extension is a no-op — presence of content is the
+ * enabled flag (no separate JSON, per YAGNI).
+ *
+ * Loading is wired to `session_start` (which also fires on `/reload`, new,
+ * resume, and fork), so edits to either file take effect on the next
+ * `/reload` without a full restart.
+ */
+
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
+const FOREMOST_FILENAME = "foremost.md";
+
+export class ForemostSettings {
+  private _content = "";
+
+  get content(): string {
+    return this._content;
+  }
+
+  /** Read global + project files and cache the concatenation. Safe to call on every session_start. */
+  load(cwd: string, agentDir: string): void {
+    const globalText = readTextFile(join(agentDir, FOREMOST_FILENAME));
+    const projectText = readTextFile(join(cwd, ".pi", FOREMOST_FILENAME));
+    const parts = [globalText, projectText].filter((t) => t.trim().length > 0);
+    this._content = parts.join("\n\n");
+  }
+}
+
+/** Read a file as UTF-8 text, returning `""` for missing/unreadable files. */
+function readTextFile(path: string): string {
+  try {
+    return readFileSync(path, "utf-8");
+  } catch {
+    return "";
+  }
+}

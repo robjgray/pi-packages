@@ -1,0 +1,60 @@
+{
+  "name": "@gotgenes/pi-foremost",
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "default": "./src/index.ts"
+    }
+  },
+  "imports": {
+    "#src/*": "./src/*",
+    "#test/*": "./test/*"
+  },
+  "description": "Top-of-mind injection for pi — keeps critical instructions at the front of every generation via the context event, so they never fade from attention as a conversation grows.",
+  "author": {
+    "name": "Chris Lasher"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gotgenes/pi-packages.git",
+    "directory": "packages/pi-foremost"
+  },
+  "homepage": "https://github.com/gotgenes/pi-packages/tree/main/packages/pi-foremost#readme",
+  "bugs": {
+    "url": "https://github.com/gotgenes/pi-packages/issues"
+  },
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "foremost",
+    "top-of-mind",
+    "context"
+  ],
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": ">=0.80.5"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.16",
+    "@earendil-works/pi-coding-agent": "0.80.5",
+    "rumdl": "^0.2.10",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.8"
+  },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint:md": "rumdl check *.md",
+    "lint": "biome check . && pnpm run lint:md"
+  }
+}
