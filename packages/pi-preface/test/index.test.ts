@@ -13,29 +13,27 @@ vi.mock("@earendil-works/pi-coding-agent", () => ({
 
 import factory from "#src/index";
 
-/** Minimal `pi` that records handlers and entry-renderer/append calls. */
-function makePi(): {
-  pi: any;
-  handlers: Record<string, (...args: any[]) => any>;
-  entries: { type: string; data: any }[];
-  renderers: string[];
-} {
+/** Minimal `pi` that records handlers; each test supplies its own `ctx.ui`. */
+function makePi(): { pi: any; handlers: Record<string, (...args: any[]) => any> } {
   const handlers: Record<string, (...args: any[]) => any> = {};
-  const entries: { type: string; data: any }[] = [];
-  const renderers: string[] = [];
   const pi = {
     on: (event: string, handler: (...args: any[]) => any) => {
       handlers[event] = handler;
     },
-    registerEntryRenderer: (type: string) => {
-      renderers.push(type);
-    },
-    appendEntry: (type: string, data: any) => {
-      entries.push({ type, data });
-    },
   };
-  return { pi, handlers, entries, renderers };
+  return { pi, handlers };
 }
+
+/** A `ctx` stub whose `ui.setStatus` records calls. */
+function makeCtx(cwd: string) {
+  const statusCalls: { key: string; text: string | undefined }[] = [];
+  return {
+    ctx: { cwd, ui: { setStatus: (key: string, text: string | undefined) => statusCalls.push({ key, text }) } },
+    statusCalls,
+  };
+}
+
+const STATUS_KEY = "preface";
 
 describe("preface extension wiring", () => {
   let agentDir: string;
@@ -48,82 +46,92 @@ describe("preface extension wiring", () => {
     mockGetAgentDir.mockReturnValue(agentDir);
   });
 
-  it("registers a `preface` entry renderer on load", () => {
-    const { pi, renderers } = makePi();
-    factory(pi);
-    expect(renderers).toContain("preface");
-  });
-
-  it("appends a preface entry on a fresh session_start when content is configured", () => {
-    writeFileSync(join(cwd, ".pi", "preface.md"), "stay sharp");
-    const { pi, handlers, entries } = makePi();
-    factory(pi);
-
-    handlers.session_start({ type: "session_start", reason: "startup" }, { cwd });
-
-    expect(entries).toHaveLength(1);
-    expect(entries[0].type).toBe("preface");
-    // Project path is displayed relative to cwd.
-    expect(entries[0].data.sources).toContain(".pi/preface.md");
-    expect(entries[0].data.chars).toBe("stay sharp".length);
-  });
-
-  it("does not append the entry when no content is configured", () => {
-    const { pi, handlers, entries } = makePi();
-    factory(pi);
-    handlers.session_start({ type: "session_start", reason: "startup" }, { cwd });
-    expect(entries).toHaveLength(0);
-  });
-
-  it("does not append the entry on non-fresh session_start reasons (reload/resume/fork)", () => {
-    writeFileSync(join(cwd, ".pi", "preface.md"), "stay sharp");
-    const { pi, handlers, entries } = makePi();
-    factory(pi);
-
-    for (const reason of ["reload", "resume", "fork"]) {
-      handlers.session_start({ type: "session_start", reason }, { cwd });
-    }
-    // Content still reloads silently; no notice entries appended.
-    expect(entries).toHaveLength(0);
-  });
-
-  it("injects the block on `context` after `session_start` loads the content", () => {
+  it("sets the footer on `context` with the absolute project path when only the project file is configured", () => {
     writeFileSync(join(cwd, ".pi", "preface.md"), "stay sharp");
     const { pi, handlers } = makePi();
+    const { ctx, statusCalls } = makeCtx(cwd);
     factory(pi);
 
-    handlers.session_start({ type: "session_start", reason: "startup" }, { cwd });
+    handlers.session_start({ type: "session_start", reason: "startup" }, ctx);
 
-    const messages = [{ role: "user", content: "hi" }];
-    const result = handlers.context({ type: "context", messages });
+    const result = handlers.context({ type: "context", messages: [{ role: "user", content: "hi" }] }, ctx);
 
+    // Injection happened.
     expect(result).toBeDefined();
-    const arr = result.messages[0].content as { type: string; text?: string }[];
-    expect(arr[0]).toEqual({ type: "text", text: "<preface>\nstay sharp\n</preface>" });
-    expect(arr[1]).toEqual({ type: "text", text: "hi" });
+    // Footer names the absolute project path under the Project label.
+    const set = statusCalls.filter((c) => c.key === STATUS_KEY);
+    expect(set).toHaveLength(1);
+    expect(set[0].text).toBe(`Preface (Project): ${join(cwd, ".pi", "preface.md")}`);
   });
 
-  it("is a no-op on `context` when no content is configured", () => {
+  it("sets the footer with both labeled absolute paths when both files are configured", () => {
+    writeFileSync(join(agentDir, "preface.md"), "global");
+    writeFileSync(join(cwd, ".pi", "preface.md"), "project");
     const { pi, handlers } = makePi();
+    const { ctx, statusCalls } = makeCtx(cwd);
     factory(pi);
-    handlers.session_start({ type: "session_start", reason: "startup" }, { cwd });
-    const messages = [{ role: "user", content: "hi" }];
-    expect(handlers.context({ type: "context", messages })).toBeUndefined();
+
+    handlers.session_start({ type: "session_start", reason: "startup" }, ctx);
+    handlers.context({ type: "context", messages: [{ role: "user", content: "hi" }] }, ctx);
+
+    const set = statusCalls.filter((c) => c.key === STATUS_KEY).at(-1)!;
+    expect(set.text).toBe(
+      `Preface (Global): ${join(agentDir, "preface.md")}  Preface (Project): ${join(cwd, ".pi", "preface.md")}`,
+    );
   });
 
-  it("reloads content when `session_start` fires again (reload/new/resume)", () => {
+  it("does not set the footer on `context` when no content is configured", () => {
     const { pi, handlers } = makePi();
+    const { ctx, statusCalls } = makeCtx(cwd);
     factory(pi);
 
-    handlers.session_start({ type: "session_start", reason: "startup" }, { cwd });
-    expect(handlers.context({ type: "context", messages: [{ role: "user", content: "hi" }] })).toBeUndefined();
+    handlers.session_start({ type: "session_start", reason: "startup" }, ctx);
+    const result = handlers.context({ type: "context", messages: [{ role: "user", content: "hi" }] }, ctx);
+
+    expect(result).toBeUndefined();
+    // No footer *line* (defined text) is ever shown when there's nothing to inject.
+    // The session_start clear (undefined) is expected and allowed.
+    expect(statusCalls.filter((c) => c.key === STATUS_KEY && c.text !== undefined)).toHaveLength(0);
+  });
+
+  it("clears the footer on `agent_settled`", () => {
+    writeFileSync(join(cwd, ".pi", "preface.md"), "stay sharp");
+    const { pi, handlers } = makePi();
+    const { ctx, statusCalls } = makeCtx(cwd);
+    factory(pi);
+
+    handlers.session_start({ type: "session_start", reason: "startup" }, ctx);
+    handlers.context({ type: "context", messages: [{ role: "user", content: "hi" }] }, ctx);
+    handlers.agent_settled({ type: "agent_settled" }, ctx);
+
+    const last = statusCalls.filter((c) => c.key === STATUS_KEY).at(-1)!;
+    expect(last.text).toBeUndefined();
+  });
+
+  it("clears the footer on `session_start` when no content is configured", () => {
+    const { pi, handlers } = makePi();
+    const { ctx, statusCalls } = makeCtx(cwd);
+    factory(pi);
+
+    handlers.session_start({ type: "session_start", reason: "startup" }, ctx);
+
+    const last = statusCalls.filter((c) => c.key === STATUS_KEY).at(-1)!;
+    expect(last.text).toBeUndefined();
+  });
+
+  it("updates the footer path after a reload adds a project file", () => {
+    const { pi, handlers } = makePi();
+    const { ctx, statusCalls } = makeCtx(cwd);
+    factory(pi);
+
+    handlers.session_start({ type: "session_start", reason: "startup" }, ctx);
+    expect(handlers.context({ type: "context", messages: [{ role: "user", content: "hi" }] }, ctx)).toBeUndefined();
 
     writeFileSync(join(cwd, ".pi", "preface.md"), "now configured");
-    handlers.session_start({ type: "session_start", reason: "reload" }, { cwd });
+    handlers.session_start({ type: "session_start", reason: "reload" }, ctx);
+    handlers.context({ type: "context", messages: [{ role: "user", content: "hi" }] }, ctx);
 
-    const result = handlers.context({ type: "context", messages: [{ role: "user", content: "hi" }] });
-    expect(result).toBeDefined();
-    const arr = result.messages[0].content as { type: string; text?: string }[];
-    expect(arr[0]).toEqual({ type: "text", text: "<preface>\nnow configured\n</preface>" });
+    const last = statusCalls.filter((c) => c.key === STATUS_KEY).at(-1)!;
+    expect(last.text).toBe(`Preface (Project): ${join(cwd, ".pi", "preface.md")}`);
   });
 });

@@ -1,7 +1,7 @@
 /**
  * pi-preface — top-of-mind injection for pi.
  *
- * Registers two extension handlers against the public `ExtensionAPI`:
+ * Registers extension handlers against the public `ExtensionAPI`:
  *
  *   - `session_start` → (re)load the preface content from disk (global +
  *     project). `session_start` fires on startup and on `/reload`, so edits to
@@ -10,76 +10,49 @@
  *     from the cached content and prepend it to the latest user-side message.
  *     The transform is transient: it shapes what the provider sees, never the
  *     persisted transcript (the agent loop uses `transformContext` only for the
- *     `convertToLlm` step).
+ *     `convertToLlm` step). While injecting, set a footer status line naming
+ *     the contributing file(s) so the user can see preface is being sent.
+ *   - `agent_settled`  → clear the footer line once the turn is fully idle, so
+ *     the notice is present while preface is being sent and gone between turns.
  *
- * Visibility: the injection itself is transient and never appears in the TUI.
- * So that the user can see preface is active, a one-time `preface` custom entry
- * is appended on a fresh session (`startup`/`new`) — a single dim line
- * `preface: <path(s)>` rendered in the transcript, not sent to the LLM. It does
- * not repeat per turn or per reload, keeping the transcript uncluttered.
- *
- * No tools, no commands — preface is a listener only, which is why the package
- * has no `@sinclair/typebox` dependency.
+ * No tools, no commands, no persisted entries — preface is a listener only,
+ * which is why the package has no `@sinclair/typebox` or `@earendil-works/pi-tui`
+ * dependency.
  */
 
 import { type ExtensionAPI, getAgentDir } from "@earendil-works/pi-coding-agent";
-import { Box, Text } from "@earendil-works/pi-tui";
 import { composePrefaceBlock } from "#src/content";
 import { injectPreface } from "#src/inject";
 import { PrefaceSettings } from "#src/settings";
 
-/** Data persisted with the `preface` custom entry (UI-only, not sent to the LLM). */
-interface PrefaceEntryData {
-  /** Display-friendly paths that contributed, global first then project. */
-  sources: string[];
-  /** Total character count of the concatenated preface content. */
-  chars: number;
-}
-
-const ENTRY_TYPE = "preface";
-/** Session-start reasons that begin a fresh transcript, where the notice belongs. */
-const FRESH_START_REASONS = new Set(["startup", "new"]);
+const STATUS_KEY = "preface";
 
 export default function (pi: ExtensionAPI): void {
   const settings = new PrefaceSettings();
 
-  // One-time, UI-only notice. No background (dimmer than the skill block) so it
-  // reads as a quiet status line, not a prominent card.
-  pi.registerEntryRenderer<PrefaceEntryData>(ENTRY_TYPE, (entry, _opts, theme) => {
-    const data = entry.data;
-    if (!data || data.sources.length === 0) return undefined;
-    const box = new Box(1, 1, (text) => text);
-    box.addChild(
-      new Text(
-        theme.fg("accent", "preface:") + theme.fg("dim", ` ${data.sources.join(" + ")}`),
-        0,
-        0,
-      ),
-    );
-    return box;
-  });
-
-  pi.on("session_start", (event, ctx) => {
+  pi.on("session_start", (_event, ctx) => {
     settings.load(ctx.cwd, getAgentDir());
-    if (settings.content && FRESH_START_REASONS.has(event.reason)) {
-      pi.appendEntry<PrefaceEntryData>(ENTRY_TYPE, {
-        sources: settings.sources.map((p) => displayPath(p, ctx.cwd)),
-        chars: settings.content.length,
-      });
+    if (!settings.content) {
+      ctx.ui.setStatus(STATUS_KEY, undefined);
     }
   });
 
-  pi.on("context", (event) => {
+  pi.on("context", (event, ctx) => {
     const block = composePrefaceBlock(settings.content);
-    if (!block) return; // nothing configured — leave the context untouched
+    if (!block) return; // nothing configured — leave the context and footer untouched
+    ctx.ui.setStatus(STATUS_KEY, footerText(settings.globalPath, settings.projectPath));
     return { messages: injectPreface(event.messages, block) };
+  });
+
+  pi.on("agent_settled", (_event, ctx) => {
+    ctx.ui.setStatus(STATUS_KEY, undefined);
   });
 }
 
-/** Shorten an absolute path for display: project files relative to cwd, global files tilde-expanded. */
-function displayPath(path: string, cwd: string): string {
-  if (path.startsWith(`${cwd}/`)) return path.slice(cwd.length + 1);
-  const home = process.env.HOME ?? "";
-  if (home && path.startsWith(home)) return `~${path.slice(home.length)}`;
-  return path;
+/** Single footer line naming each contributing file by layer, absolute paths. */
+function footerText(globalPath: string | undefined, projectPath: string | undefined): string {
+  const parts: string[] = [];
+  if (globalPath) parts.push(`Preface (Global): ${globalPath}`);
+  if (projectPath) parts.push(`Preface (Project): ${projectPath}`);
+  return parts.join("  ");
 }

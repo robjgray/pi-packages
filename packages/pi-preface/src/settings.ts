@@ -14,6 +14,10 @@
  * `content` is `""` and the extension is a no-op — presence of content is the
  * enabled flag (no separate JSON, per YAGNI).
  *
+ * `globalPath` / `projectPath` expose the absolute path of each contributing
+ * file (undefined when that layer is absent/empty) so the footer notice can
+ * label them without re-deriving the paths.
+ *
  * Loading is wired to `session_start` (which also fires on `/reload`, new,
  * resume, and fork), so edits to either file take effect on the next
  * `/reload` without a full restart.
@@ -26,15 +30,21 @@ const PREFACE_FILENAME = "preface.md";
 
 export class PrefaceSettings {
   private _content = "";
-  private _sources: string[] = [];
+  private _globalPath: string | undefined;
+  private _projectPath: string | undefined;
 
   get content(): string {
     return this._content;
   }
 
-  /** Absolute paths that contributed non-empty content, global first then project. */
-  get sources(): string[] {
-    return this._sources;
+  /** Absolute path of the contributing global file, or undefined if absent/empty. */
+  get globalPath(): string | undefined {
+    return this._globalPath;
+  }
+
+  /** Absolute path of the contributing project file, or undefined if absent/empty. */
+  get projectPath(): string | undefined {
+    return this._projectPath;
   }
 
   /** Read global + project files and cache the concatenation. Safe to call on every session_start. */
@@ -43,18 +53,18 @@ export class PrefaceSettings {
     const projectPath = join(cwd, ".pi", PREFACE_FILENAME);
     const globalText = readTextFile(globalPath);
     const projectText = readTextFile(projectPath);
-    const sources: string[] = [];
     const parts: string[] = [];
+    this._globalPath = undefined;
+    this._projectPath = undefined;
     if (globalText.trim()) {
-      sources.push(globalPath);
+      this._globalPath = globalPath;
       parts.push(globalText);
     }
     if (projectText.trim()) {
-      sources.push(projectPath);
+      this._projectPath = projectPath;
       parts.push(projectText);
     }
     this._content = parts.join("\n\n");
-    this._sources = sources;
   }
 }
 

@@ -62,16 +62,16 @@ The block is prepended to the latest agent-visible user-side message, whatever i
 
 ## Visibility in the TUI
 
-The injection itself is transient — it shapes what the model sees and is never written to the session transcript, so it does **not** appear in the TUI per turn (unlike a `[skill]` invocation, which is a persisted message rendered with a purple block).
+The injection itself is transient — it shapes what the model sees and is never written to the session transcript, so it does **not** appear in the transcript per turn (unlike a `[skill]` invocation, which is a persisted message rendered with a purple block).
 
-So you can see that preface is active, a one-time `preface` custom entry is appended at the start of a fresh session and rendered as a single dim line in the transcript:
+So you can see when preface is being sent, the footer status line is set on every `context` event (every generation) and cleared when the turn settles (`agent_settled`):
 
 ```text
-preface: ~/.pi/agent/preface.md + .pi/preface.md
+Preface (Global): /abs/global/preface.md  Preface (Project): /abs/project/.pi/preface.md
 ```
 
-It is UI-only (not sent to the LLM), shows once on `startup`/`new` (not on every turn, not on `/reload`), and displays the contributing paths — global tilde-expanded, project relative to cwd.
-Quiet on purpose: less prominent than the skill block, just enough to confirm it's loaded.
+It is a transient footer line — never written to the session JSONL, so it costs zero model tokens and zero disk — present while preface is being sent during a turn and gone between turns.
+Each contributing file is labeled by layer with its absolute path; only the configured layer(s) are shown.
 
 ## Limits (by design)
 
