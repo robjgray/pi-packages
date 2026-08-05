@@ -148,6 +148,7 @@ export class AgentTool {
 			'- Use model to specify a different model (as "provider/modelId", or fuzzy e.g. "haiku", "sonnet").',
 			"- Use thinking to control extended thinking level.",
 			"- Use inherit_context if the agent needs the parent conversation history.",
+			"- To have a subagent invoke a skill, start its prompt with `/skill:<name>` + the intent (e.g. `/skill:bmad-deep-recon technical`). The subagent activates it exactly like `/skill:` in your own session — don't read or summarize the skill yourself.",
 		].join("\n");
 
 		return defineTool({
