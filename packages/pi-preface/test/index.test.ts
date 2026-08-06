@@ -144,6 +144,46 @@ describe("preface extension wiring", () => {
     expect(entries).toHaveLength(0);
   });
 
+  it("does not inject after the model has finished (stopReason stop before latest toolResult)", () => {
+    writeFileSync(join(cwd, ".pi", "preface.md"), "stay sharp");
+    const { pi, handlers, entries } = makePi();
+    const { ctx } = makeCtx(cwd, "openai-completions");
+    factory(pi);
+
+    handlers.session_start({ type: "session_start", reason: "startup" }, ctx);
+    // Model delivered a summary (stop), then continued with a read tool for
+    // some reason. The preface must NOT fire here — it would re-engage the
+    // model into a re-summarizing loop.
+    const messages = [
+      { role: "user", content: "do the thing" },
+      { role: "assistant", content: [{ type: "text", text: "Done." }], stopReason: "stop" },
+      { role: "assistant", content: [{ type: "toolCall" }], stopReason: "toolUse" },
+      { role: "toolResult", content: [{ type: "text", text: "read result" }] },
+    ];
+    const result = handlers.context({ type: "context", messages }, ctx);
+
+    expect(result).toBeUndefined();
+    expect(entries).toHaveLength(0);
+  });
+
+  it("does inject on a normal tool round (no stop since last user)", () => {
+    writeFileSync(join(cwd, ".pi", "preface.md"), "stay sharp");
+    const { pi, handlers, entries } = makePi();
+    const { ctx } = makeCtx(cwd, "openai-completions");
+    factory(pi);
+
+    handlers.session_start({ type: "session_start", reason: "startup" }, ctx);
+    const messages = [
+      { role: "user", content: "do the thing" },
+      { role: "assistant", content: [{ type: "toolCall" }], stopReason: "toolUse" },
+      { role: "toolResult", content: [{ type: "text", text: "result" }] },
+    ];
+    const result = handlers.context({ type: "context", messages }, ctx);
+
+    expect(result).toBeDefined();
+    expect(entries).toHaveLength(1);
+  });
+
   it("does not append when no content is configured", () => {
     const { pi, handlers, entries } = makePi();
     const { ctx } = makeCtx(cwd);

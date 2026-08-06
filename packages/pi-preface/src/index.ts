@@ -61,6 +61,16 @@ export default function (pi: ExtensionAPI): void {
     const block = composePrefaceBlock(settings.content);
     if (!block) return;
 
+    // Don't inject after the model has already finished its turn (stopReason
+    // "stop"). A post-summary ping re-engages the model and sets it into a
+    // re-summarizing loop. Scan backward: if we hit an assistant "stop"
+    // before a new user message, the model is done — skip this generation.
+    for (let i = event.messages.length - 1; i >= 0; i--) {
+      const msg = event.messages[i];
+      if (msg.role === "user") break; // new turn — safe to inject
+      if (msg.role === "assistant" && (msg as { stopReason?: string }).stopReason === "stop") return; // model finished
+    }
+
     const last = event.messages[event.messages.length - 1];
     const entryData: PrefaceEntryData = {
       globalPath: settings.globalPath,
