@@ -88,6 +88,24 @@ describe("preface extension wiring", () => {
     expect(entries).toHaveLength(5);
   });
 
+  it("does not append when the latest message is a toolResult (avoids contaminating tool output)", () => {
+    writeFileSync(join(cwd, ".pi", "preface.md"), "stay sharp");
+    const { pi, handlers, entries } = makePi();
+    const { ctx } = makeCtx(cwd);
+    factory(pi);
+
+    handlers.session_start({ type: "session_start", reason: "startup" }, ctx);
+    const messages = [
+      { role: "user", content: "hi" },
+      { role: "assistant", content: [{ type: "toolCall" }] },
+      { role: "toolResult", content: [{ type: "text", text: "result" }] },
+    ];
+    const result = handlers.context({ type: "context", messages }, ctx);
+
+    expect(result).toBeUndefined();
+    expect(entries).toHaveLength(0);
+  });
+
   it("does not append when no content is configured", () => {
     const { pi, handlers, entries } = makePi();
     const { ctx } = makeCtx(cwd);

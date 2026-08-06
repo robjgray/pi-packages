@@ -46,19 +46,13 @@ describe("injectPreface", () => {
       expect(arr[1]).toEqual({ type: "text", text: "original" });
     });
 
-    it("prepends to the latest toolResult message when it is last", () => {
+    it("is a no-op when the latest message is a toolResult (would contaminate tool output on ollama)", () => {
       const messages: InjectableMessage[] = [
         { role: "user", content: "search" },
         { role: "assistant", content: [{ type: "toolCall" }] },
         { role: "toolResult", content: [{ type: "text", text: "result" }] },
       ];
-      const out = injectPreface(messages, BLOCK);
-      // Only the last (toolResult) message is touched.
-      expect(out[0]).toBe(messages[0]);
-      expect(out[1]).toBe(messages[1]);
-      const arr = out[2].content as { type: string; text?: string }[];
-      expect(arr[0]).toEqual({ type: "text", text: BLOCK });
-      expect(arr[1]).toEqual({ type: "text", text: "result" });
+      expect(injectPreface(messages, BLOCK)).toBe(messages);
     });
   });
 

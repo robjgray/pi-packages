@@ -66,6 +66,11 @@ export default function (pi: ExtensionAPI): void {
   pi.on("context", (event, ctx) => {
     const block = composePrefaceBlock(settings.content);
     if (!block) return; // nothing configured — leave the context untouched
+    // Only inject into real user messages — injecting into toolResult
+    // contaminates tool output on OpenAI-completions (ollama), which merges
+    // the block into the tool result text; the model reads it as file content.
+    const last = event.messages[event.messages.length - 1];
+    if (last.role !== "user") return;
     // Visible per-send record in the transcript (persisted, UI-only).
     pi.appendEntry<PrefaceEntryData>(ENTRY_TYPE, {
       globalPath: settings.globalPath,

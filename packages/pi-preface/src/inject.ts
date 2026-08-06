@@ -45,8 +45,11 @@ export interface InjectableMessage {
   content?: string | InjectableContent[];
 }
 
-/** Roles that render on the user side of the conversation for the next generation. */
-const USER_SIDE_ROLES = new Set(["user", "toolResult"]);
+/** Roles that the injector safely targets.
+ *  Only `user` — injecting into `toolResult` contaminates tool output on
+ *  OpenAI-completions (ollama), which merges the block into the tool result
+ *  text; the model then reads it as file content and tries to "fix" it. */
+const INJECTABLE_ROLES = new Set(["user"]);
 
 /**
  * Prepend `block` to the latest user-side message in `messages`.
@@ -70,7 +73,7 @@ export function injectPreface<T extends InjectableMessage>(
   // reach back and rewrite an earlier user turn — that would not be top-of-
   // attention and would mutate a past message.
   const target = messages[messages.length - 1];
-  if (!USER_SIDE_ROLES.has(target.role)) return messages;
+  if (!INJECTABLE_ROLES.has(target.role)) return messages;
 
   const textBlock = { type: "text", text: block };
 
