@@ -145,7 +145,6 @@ export class AgentTool {
 			"- Use run_in_background for work you don't need immediately. You will be notified when it completes.",
 			"- Use resume with an agent ID to continue a previous agent's work.",
 			"- Use steer_subagent to send mid-run messages to a running background agent.",
-			'- Use model to specify a different model (as "provider/modelId", or fuzzy e.g. "haiku", "sonnet").',
 			"- Use thinking to control extended thinking level.",
 			"- Use inherit_context if the agent needs the parent conversation history.",
 			"- To have a subagent invoke a skill, start its prompt with `/skill:<name>` + the intent (e.g. `/skill:bmad-deep-recon technical`). The subagent activates it exactly like `/skill:` in your own session — don't read or summarize the skill yourself.",
@@ -175,12 +174,6 @@ ${guidelines}
 				subagent_type: Type.String({
 					description: `The type of specialized agent to use. Available types: ${availableTypesText}. Custom agents from .pi/agents/<name>.md (project) or ${agentDir}/agents/<name>.md (global) are also available.`,
 				}),
-				model: Type.Optional(
-					Type.String({
-						description:
-							'Optional model override. Accepts "provider/modelId" or fuzzy name (e.g. "haiku", "sonnet"). Omit to use the agent type\'s default.',
-					}),
-				),
 				thinking: Type.Optional(
 					Type.String({
 						description:
