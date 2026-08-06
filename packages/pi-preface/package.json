@@ -38,7 +38,8 @@
     ]
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": ">=0.80.5"
+    "@earendil-works/pi-coding-agent": ">=0.80.5",
+    "@earendil-works/pi-tui": ">=0.75.0"
   },
   "engines": {
     "node": ">=22"
@@ -46,6 +47,7 @@
   "devDependencies": {
     "@biomejs/biome": "catalog:",
     "@earendil-works/pi-coding-agent": "0.80.5",
+    "@earendil-works/pi-tui": "0.80.5",
     "@types/node": "catalog:",
     "rumdl": "catalog:",
     "typescript": "catalog:",

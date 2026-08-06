@@ -10,41 +10,67 @@
  *     from the cached content and prepend it to the latest user-side message.
  *     The transform is transient: it shapes what the provider sees, never the
  *     persisted transcript (the agent loop uses `transformContext` only for the
- *     `convertToLlm` step). While injecting, set a footer status line naming
- *     the contributing file(s) so the user can see preface is being sent.
- *   - `agent_settled`  → clear the footer line once the turn is fully idle, so
- *     the notice is present while preface is being sent and gone between turns.
+ *     `convertToLlm` step). The same event also appends a `preface` custom
+ *     entry so the user can see exactly when/where preface fired in the
+ *     transcript history.
  *
- * No tools, no commands, no persisted entries — preface is a listener only,
- * which is why the package has no `@sinclair/typebox` or `@earendil-works/pi-tui`
- * dependency.
+ * Visibility: every send appends one `[preface]` block (rendered in the
+ * `[skill]` vein — purple `customMessageBg`) naming the contributing file(s) by
+ * absolute path. The block is a custom entry — UI-only, not sent to the LLM —
+ * so the indicator costs zero model tokens. It IS persisted to the session
+ * JSONL (one line per send), which is the deliberate trade: a visible per-send
+ * history record at the cost of some transcript/file clutter.
+ *
+ * No tools, no commands — preface is a listener only.
  */
 
 import { type ExtensionAPI, getAgentDir } from "@earendil-works/pi-coding-agent";
-import { composePrefaceBlock, prefaceFooterText } from "#src/content";
+import { Box, Text } from "@earendil-works/pi-tui";
+import { composePrefaceBlock } from "#src/content";
 import { injectPreface } from "#src/inject";
 import { PrefaceSettings } from "#src/settings";
 
-const STATUS_KEY = "preface";
+const ENTRY_TYPE = "preface";
+
+/** Data persisted with each `preface` entry (UI-only, not sent to the LLM). */
+interface PrefaceEntryData {
+  globalPath: string | undefined;
+  projectPath: string | undefined;
+}
 
 export default function (pi: ExtensionAPI): void {
   const settings = new PrefaceSettings();
 
+  // `[skill]`-vein renderer: purple background, `[preface]` label, absolute
+  // path line(s) labelled by layer. Matches the SkillInvocationMessageComponent
+  // styling so it reads as the same category of artifact.
+  pi.registerEntryRenderer<PrefaceEntryData>(ENTRY_TYPE, (entry, _opts, theme) => {
+    const d = entry.data;
+    if (!d || (!d.globalPath && !d.projectPath)) return undefined;
+    const box = new Box(1, 1, (text) => theme.bg("customMessageBg", text));
+    const label = theme.fg("customMessageLabel", "\x1b[1m[preface]\x1b[22m");
+    const lines: string[] = [];
+    if (d.globalPath) lines.push(`Preface (Global): ${d.globalPath}`);
+    if (d.projectPath) lines.push(`Preface (Project): ${d.projectPath}`);
+    box.addChild(new Text(`${label} ${theme.fg("customMessageText", lines[0])}`, 0, 0));
+    for (const line of lines.slice(1)) {
+      box.addChild(new Text(theme.fg("customMessageText", line), 0, 0));
+    }
+    return box;
+  });
+
   pi.on("session_start", (_event, ctx) => {
     settings.load(ctx.cwd, getAgentDir());
-    if (!settings.content) {
-      ctx.ui.setStatus(STATUS_KEY, undefined);
-    }
   });
 
   pi.on("context", (event, ctx) => {
     const block = composePrefaceBlock(settings.content);
-    if (!block) return; // nothing configured — leave the context and footer untouched
-    ctx.ui.setStatus(STATUS_KEY, prefaceFooterText(settings.globalPath, settings.projectPath));
+    if (!block) return; // nothing configured — leave the context untouched
+    // Visible per-send record in the transcript (persisted, UI-only).
+    pi.appendEntry<PrefaceEntryData>(ENTRY_TYPE, {
+      globalPath: settings.globalPath,
+      projectPath: settings.projectPath,
+    });
     return { messages: injectPreface(event.messages, block) };
-  });
-
-  pi.on("agent_settled", (_event, ctx) => {
-    ctx.ui.setStatus(STATUS_KEY, undefined);
   });
 }

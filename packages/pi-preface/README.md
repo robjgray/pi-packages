@@ -62,15 +62,17 @@ The block is prepended to the latest agent-visible user-side message, whatever i
 
 ## Visibility in the TUI
 
-The injection itself is transient — it shapes what the model sees and is never written to the session transcript, so it does **not** appear in the transcript per turn (unlike a `[skill]` invocation, which is a persisted message rendered with a purple block).
-
-So you can see when preface is being sent, the footer status line is set on every `context` event (every generation) and cleared when the turn settles (`agent_settled`):
+The injection itself is transient — it shapes what the model sees and is never written to the session transcript as model context.
+But so you can see exactly **when and where preface fired**, every `context` event (every send) appends a persisted `[preface]` block in the transcript, styled like a `[skill]` invocation (purple background, `[preface]` label):
 
 ```text
-Preface (Global): /abs/global/preface.md  Preface (Project): /abs/project/.pi/preface.md
+[preface] Preface (Global): /Users/you/.pi/agent/preface.md
+          Preface (Project): /Users/you/project/.pi/preface.md
 ```
 
-It is a transient footer line — never written to the session JSONL, so it costs zero model tokens and zero disk — present while preface is being sent during a turn and gone between turns.
+Each block is a custom entry — UI-only, **not sent to the LLM** — so the indicator costs zero model tokens.
+It IS persisted to the session JSONL (one line per send), which is the deliberate trade: a visible per-send history record at the cost of some transcript and file clutter.
+If preface is sent 30 times, you see 30 `[preface]` blocks.
 Each contributing file is labeled by layer with its absolute path; only the configured layer(s) are shown.
 
 ## Limits (by design)
