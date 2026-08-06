@@ -33,8 +33,8 @@ function makePi(): {
   return { pi, handlers, entries, renderers };
 }
 
-function makeCtx(cwd: string) {
-  return { ctx: { cwd, ui: {} } };
+function makeCtx(cwd: string, api: string = "openai-completions") {
+  return { ctx: { cwd, ui: {}, model: { api, provider: "ollama" } } };
 }
 
 const ENTRY_TYPE = "preface";
@@ -56,7 +56,7 @@ describe("preface extension wiring", () => {
     expect(renderers).toContain(ENTRY_TYPE);
   });
 
-  it("appends a preface entry on every `context` event when content is configured", () => {
+  it("prepends into a user message and appends an entry (first-gen case)", () => {
     writeFileSync(join(cwd, ".pi", "preface.md"), "stay sharp");
     const { pi, handlers, entries } = makePi();
     const { ctx } = makeCtx(cwd);
@@ -70,28 +70,66 @@ describe("preface extension wiring", () => {
 
     expect(result).toBeDefined();
     expect(entries).toHaveLength(1);
-    expect(entries[0].type).toBe(ENTRY_TYPE);
-    expect(entries[0].data.projectPath).toBe(join(cwd, ".pi", "preface.md"));
+    // Injection prepended the block into the user message.
+    const arr = result.messages[0].content as { type: string; text?: string }[];
+    expect(arr[0]).toEqual({ type: "text", text: "<preface>\nstay sharp\n</preface>" });
   });
 
-  it("appends one entry per send (every context event)", () => {
+  it("appends a separate user message on toolResult + openai-completions (tool-round case)", () => {
+    writeFileSync(join(cwd, ".pi", "preface.md"), "stay sharp");
+    const { pi, handlers, entries } = makePi();
+    const { ctx } = makeCtx(cwd, "openai-completions");
+    factory(pi);
+
+    handlers.session_start({ type: "session_start", reason: "startup" }, ctx);
+    const messages = [
+      { role: "user", content: "hi" },
+      { role: "assistant", content: [{ type: "toolCall" }] },
+      { role: "toolResult", content: [{ type: "text", text: "result" }] },
+    ];
+    const result = handlers.context({ type: "context", messages }, ctx);
+
+    expect(result).toBeDefined();
+    expect(entries).toHaveLength(1);
+    // A NEW user message is appended (not merged into the toolResult).
+    expect(result.messages).toHaveLength(4);
+    const appended = result.messages[3];
+    expect(appended.role).toBe("user");
+    const arr = appended.content as { type: string; text?: string }[];
+    expect(arr[0]).toEqual({ type: "text", text: "<preface>\nstay sharp\n</preface>" });
+    // The toolResult is untouched.
+    expect(result.messages[2]).toBe(messages[2]);
+  });
+
+  it("fires on every generation (user + toolResult rounds)", () => {
     writeFileSync(join(cwd, ".pi", "preface.md"), "stay sharp");
     const { pi, handlers, entries } = makePi();
     const { ctx } = makeCtx(cwd);
     factory(pi);
 
     handlers.session_start({ type: "session_start", reason: "startup" }, ctx);
-    for (let i = 0; i < 5; i++) {
-      handlers.context({ type: "context", messages: [{ role: "user", content: "hi" }] }, ctx);
-    }
+    // First gen (user latest).
+    handlers.context({ type: "context", messages: [{ role: "user", content: "hi" }] }, ctx);
+    // Tool round (toolResult latest).
+    handlers.context(
+      {
+        type: "context",
+        messages: [
+          { role: "user", content: "hi" },
+          { role: "assistant", content: [{ type: "toolCall" }] },
+          { role: "toolResult", content: [{ type: "text", text: "r" }] },
+        ],
+      },
+      ctx,
+    );
 
-    expect(entries).toHaveLength(5);
+    expect(entries).toHaveLength(2);
   });
 
-  it("does not append when the latest message is a toolResult (avoids contaminating tool output)", () => {
+  it("skips toolResult rounds on non-openai-completions (Anthropic safety)", () => {
     writeFileSync(join(cwd, ".pi", "preface.md"), "stay sharp");
     const { pi, handlers, entries } = makePi();
-    const { ctx } = makeCtx(cwd);
+    const { ctx } = makeCtx(cwd, "anthropic-messages");
     factory(pi);
 
     handlers.session_start({ type: "session_start", reason: "startup" }, ctx);
@@ -121,7 +159,7 @@ describe("preface extension wiring", () => {
     expect(entries).toHaveLength(0);
   });
 
-  it("includes both global and project paths when both are configured", () => {
+  it("includes both global and project paths in the entry", () => {
     writeFileSync(join(agentDir, "preface.md"), "global");
     writeFileSync(join(cwd, ".pi", "preface.md"), "project");
     const { pi, handlers, entries } = makePi();

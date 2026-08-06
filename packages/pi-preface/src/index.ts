@@ -7,19 +7,17 @@
  *     project). `session_start` fires on startup and on `/reload`, so edits to
  *     the markdown files are picked up without a full restart.
  *   - `context`       → before every LLM call, compose the `<preface>` block
- *     from the cached content and prepend it to the latest user-side message.
+ *     from the cached content and inject it. Two paths depending on the latest
+ *     message's role:
+ *       - `user` (first gen of a turn / steer): prepend the block into the user
+ *         message. Clean for all providers.
+ *       - `toolResult` (tool rounds): append a SEPARATE `user` message carrying
+ *         the block — but only on `openai-completions` (ollama), where the
+ *         converter keeps it distinct from tool content. On Anthropic this
+ *         would break role alternation, so tool rounds are skipped there.
  *     The transform is transient: it shapes what the provider sees, never the
- *     persisted transcript (the agent loop uses `transformContext` only for the
- *     `convertToLlm` step). The same event also appends a `preface` custom
- *     entry so the user can see exactly when/where preface fired in the
- *     transcript history.
- *
- * Visibility: every send appends one `[preface]` block (rendered in the
- * `[skill]` vein — purple `customMessageBg`) naming the contributing file(s) by
- * absolute path. The block is a custom entry — UI-only, not sent to the LLM —
- * so the indicator costs zero model tokens. It IS persisted to the session
- * JSONL (one line per send), which is the deliberate trade: a visible per-send
- * history record at the cost of some transcript/file clutter.
+ *     persisted transcript. The same event also appends a `preface` custom
+ *     entry so the user can see exactly when/where preface fired.
  *
  * No tools, no commands — preface is a listener only.
  */
@@ -32,7 +30,6 @@ import { PrefaceSettings } from "#src/settings";
 
 const ENTRY_TYPE = "preface";
 
-/** Data persisted with each `preface` entry (UI-only, not sent to the LLM). */
 interface PrefaceEntryData {
   globalPath: string | undefined;
   projectPath: string | undefined;
@@ -41,9 +38,6 @@ interface PrefaceEntryData {
 export default function (pi: ExtensionAPI): void {
   const settings = new PrefaceSettings();
 
-  // `[skill]`-vein renderer: purple background, `[preface]` label, absolute
-  // path line(s) labelled by layer. Matches the SkillInvocationMessageComponent
-  // styling so it reads as the same category of artifact.
   pi.registerEntryRenderer<PrefaceEntryData>(ENTRY_TYPE, (entry, _opts, theme) => {
     const d = entry.data;
     if (!d || (!d.globalPath && !d.projectPath)) return undefined;
@@ -65,17 +59,34 @@ export default function (pi: ExtensionAPI): void {
 
   pi.on("context", (event, ctx) => {
     const block = composePrefaceBlock(settings.content);
-    if (!block) return; // nothing configured — leave the context untouched
-    // Only inject into real user messages — injecting into toolResult
-    // contaminates tool output on OpenAI-completions (ollama), which merges
-    // the block into the tool result text; the model reads it as file content.
+    if (!block) return;
+
     const last = event.messages[event.messages.length - 1];
-    if (last.role !== "user") return;
-    // Visible per-send record in the transcript (persisted, UI-only).
-    pi.appendEntry<PrefaceEntryData>(ENTRY_TYPE, {
+    const entryData: PrefaceEntryData = {
       globalPath: settings.globalPath,
       projectPath: settings.projectPath,
-    });
-    return { messages: injectPreface(event.messages, block) };
+    };
+
+    if (last.role === "user") {
+      // Prepend into the user message — clean for all providers.
+      pi.appendEntry<PrefaceEntryData>(ENTRY_TYPE, entryData);
+      return { messages: injectPreface(event.messages, block) };
+    }
+
+    if (last.role === "toolResult" && ctx.model?.api === "openai-completions") {
+      // Append a separate user message after tool results. On openai-completions
+      // (ollama), the converter emits it as a standalone role:"user" param — the
+      // preface text never enters any tool result's content. Gated to
+      // openai-completions because Anthropic rejects consecutive user messages.
+      pi.appendEntry<PrefaceEntryData>(ENTRY_TYPE, entryData);
+      return {
+        messages: [
+          ...event.messages,
+          { role: "user", content: [{ type: "text", text: block }], timestamp: Date.now() },
+        ],
+      };
+    }
+
+    // Other providers + toolResult latest: skip (no safe injection path).
   });
 }
