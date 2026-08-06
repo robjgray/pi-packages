@@ -1,30 +1,25 @@
 /**
  * pi-preface — top-of-mind injection for pi.
  *
- * Registers extension handlers against the public `ExtensionAPI`:
+ * Two extension handlers:
  *
- *   - `session_start` → (re)load the preface content from disk (global +
- *     project). `session_start` fires on startup and on `/reload`, so edits to
- *     the markdown files are picked up without a full restart.
- *   - `context`       → before every LLM call, compose the `<preface>` block
- *     from the cached content and inject it. Two paths depending on the latest
- *     message's role:
- *       - `user` (first gen of a turn / steer): prepend the block into the user
- *         message. Clean for all providers.
- *       - `toolResult` (tool rounds): append a SEPARATE `user` message carrying
- *         the block — but only on `openai-completions` (ollama), where the
- *         converter keeps it distinct from tool content. On Anthropic this
- *         would break role alternation, so tool rounds are skipped there.
- *     The transform is transient: it shapes what the provider sees, never the
- *     persisted transcript. The same event also appends a `preface` custom
- *     entry so the user can see exactly when/where preface fired.
+ *   - `before_agent_start` → append a brief `<turn-context>` explanation to
+ *     the system prompt (once per user turn, persists across tool rounds via
+ *     `prepareNextTurn`). This tells the model to recognize the wrapper as
+ *     operational context, not as a user request or tool output.
+ *   - `context` → before every LLM call, compose the `<turn-context>` wrapper
+ *     from the cached preface content and prepend it to the latest message's
+ *     content (user or toolResult). The transform is transient — it shapes
+ *     what the provider sees, never the persisted transcript. A `preface`
+ *     custom entry is appended each generation for transcript visibility.
  *
- * No tools, no commands — preface is a listener only.
+ * This matches goose's TOM pattern (wrap + system-prompt explanation + metadata
+ * content) adapted for pi's separate-toolResult architecture.
  */
 
 import { type ExtensionAPI, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { Box, Text } from "@earendil-works/pi-tui";
-import { composePrefaceBlock } from "#src/content";
+import { composePrefaceBlock, TURN_CONTEXT_EXPLANATION } from "#src/content";
 import { injectPreface } from "#src/inject";
 import { PrefaceSettings } from "#src/settings";
 
@@ -57,46 +52,21 @@ export default function (pi: ExtensionAPI): void {
     settings.load(ctx.cwd, getAgentDir());
   });
 
-  pi.on("context", (event, ctx) => {
+  pi.on("before_agent_start", (event) => {
+    // Append the <turn-context> tag explanation to the system prompt. This
+    // fires once per user turn and persists across tool rounds (prepareNextTurn
+    // re-asserts the override). The explanation is brief — the actual preface
+    // content rides in the messages via the context event, not here.
+    return { systemPrompt: event.systemPrompt + TURN_CONTEXT_EXPLANATION };
+  });
+
+  pi.on("context", (event) => {
     const block = composePrefaceBlock(settings.content);
     if (!block) return;
-
-    // Don't inject after the model has already finished its turn (stopReason
-    // "stop"). A post-summary ping re-engages the model and sets it into a
-    // re-summarizing loop. Scan backward: if we hit an assistant "stop"
-    // before a new user message, the model is done — skip this generation.
-    for (let i = event.messages.length - 1; i >= 0; i--) {
-      const msg = event.messages[i];
-      if (msg.role === "user") break; // new turn — safe to inject
-      if (msg.role === "assistant" && (msg as { stopReason?: string }).stopReason === "stop") return; // model finished
-    }
-
-    const last = event.messages[event.messages.length - 1];
-    const entryData: PrefaceEntryData = {
+    pi.appendEntry<PrefaceEntryData>(ENTRY_TYPE, {
       globalPath: settings.globalPath,
       projectPath: settings.projectPath,
-    };
-
-    if (last.role === "user") {
-      // Prepend into the user message — clean for all providers.
-      pi.appendEntry<PrefaceEntryData>(ENTRY_TYPE, entryData);
-      return { messages: injectPreface(event.messages, block) };
-    }
-
-    if (last.role === "toolResult" && ctx.model?.api === "openai-completions") {
-      // Append a separate user message after tool results. On openai-completions
-      // (ollama), the converter emits it as a standalone role:"user" param — the
-      // preface text never enters any tool result's content. Gated to
-      // openai-completions because Anthropic rejects consecutive user messages.
-      pi.appendEntry<PrefaceEntryData>(ENTRY_TYPE, entryData);
-      return {
-        messages: [
-          ...event.messages,
-          { role: "user", content: [{ type: "text", text: block }], timestamp: Date.now() },
-        ],
-      };
-    }
-
-    // Other providers + toolResult latest: skip (no safe injection path).
+    });
+    return { messages: injectPreface(event.messages, block) };
   });
 }

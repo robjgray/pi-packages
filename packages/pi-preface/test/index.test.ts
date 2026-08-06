@@ -33,8 +33,8 @@ function makePi(): {
   return { pi, handlers, entries, renderers };
 }
 
-function makeCtx(cwd: string, api: string = "openai-completions") {
-  return { ctx: { cwd, ui: {}, model: { api, provider: "ollama" } } };
+function makeCtx(cwd: string) {
+  return { ctx: { cwd, ui: {} } };
 }
 
 const ENTRY_TYPE = "preface";
@@ -56,7 +56,21 @@ describe("preface extension wiring", () => {
     expect(renderers).toContain(ENTRY_TYPE);
   });
 
-  it("prepends into a user message and appends an entry (first-gen case)", () => {
+  it("appends the turn-context explanation to the system prompt via before_agent_start", () => {
+    const { pi, handlers } = makePi();
+    factory(pi);
+
+    const result = handlers.before_agent_start(
+      { type: "before_agent_start", systemPrompt: "base system prompt", prompt: "hi", systemPromptOptions: {} },
+      { cwd },
+    );
+
+    expect(result.systemPrompt).toContain("base system prompt");
+    expect(result.systemPrompt).toContain("<turn-context>");
+    expect(result.systemPrompt).toContain("operational workflow context");
+  });
+
+  it("wraps the latest user message and appends an entry on context", () => {
     writeFileSync(join(cwd, ".pi", "preface.md"), "stay sharp");
     const { pi, handlers, entries } = makePi();
     const { ctx } = makeCtx(cwd);
@@ -70,69 +84,17 @@ describe("preface extension wiring", () => {
 
     expect(result).toBeDefined();
     expect(entries).toHaveLength(1);
-    // Injection prepended the block into the user message.
     const arr = result.messages[0].content as { type: string; text?: string }[];
-    expect(arr[0]).toEqual({ type: "text", text: "<preface>\nstay sharp\n</preface>" });
+    expect(arr[0]).toEqual({ type: "text", text: "<turn-context>\nstay sharp\n</turn-context>" });
   });
 
-  it("appends a separate user message on toolResult + openai-completions (tool-round case)", () => {
-    writeFileSync(join(cwd, ".pi", "preface.md"), "stay sharp");
-    const { pi, handlers, entries } = makePi();
-    const { ctx } = makeCtx(cwd, "openai-completions");
-    factory(pi);
-
-    handlers.session_start({ type: "session_start", reason: "startup" }, ctx);
-    const messages = [
-      { role: "user", content: "hi" },
-      { role: "assistant", content: [{ type: "toolCall" }] },
-      { role: "toolResult", content: [{ type: "text", text: "result" }] },
-    ];
-    const result = handlers.context({ type: "context", messages }, ctx);
-
-    expect(result).toBeDefined();
-    expect(entries).toHaveLength(1);
-    // A NEW user message is appended (not merged into the toolResult).
-    expect(result.messages).toHaveLength(4);
-    const appended = result.messages[3];
-    expect(appended.role).toBe("user");
-    const arr = appended.content as { type: string; text?: string }[];
-    expect(arr[0]).toEqual({ type: "text", text: "<preface>\nstay sharp\n</preface>" });
-    // The toolResult is untouched.
-    expect(result.messages[2]).toBe(messages[2]);
-  });
-
-  it("fires on every generation (user + toolResult rounds)", () => {
+  it("wraps the latest toolResult message on context (tool-round case)", () => {
     writeFileSync(join(cwd, ".pi", "preface.md"), "stay sharp");
     const { pi, handlers, entries } = makePi();
     const { ctx } = makeCtx(cwd);
     factory(pi);
 
     handlers.session_start({ type: "session_start", reason: "startup" }, ctx);
-    // First gen (user latest).
-    handlers.context({ type: "context", messages: [{ role: "user", content: "hi" }] }, ctx);
-    // Tool round (toolResult latest).
-    handlers.context(
-      {
-        type: "context",
-        messages: [
-          { role: "user", content: "hi" },
-          { role: "assistant", content: [{ type: "toolCall" }] },
-          { role: "toolResult", content: [{ type: "text", text: "r" }] },
-        ],
-      },
-      ctx,
-    );
-
-    expect(entries).toHaveLength(2);
-  });
-
-  it("skips toolResult rounds on non-openai-completions (Anthropic safety)", () => {
-    writeFileSync(join(cwd, ".pi", "preface.md"), "stay sharp");
-    const { pi, handlers, entries } = makePi();
-    const { ctx } = makeCtx(cwd, "anthropic-messages");
-    factory(pi);
-
-    handlers.session_start({ type: "session_start", reason: "startup" }, ctx);
     const messages = [
       { role: "user", content: "hi" },
       { role: "assistant", content: [{ type: "toolCall" }] },
@@ -140,51 +102,28 @@ describe("preface extension wiring", () => {
     ];
     const result = handlers.context({ type: "context", messages }, ctx);
 
-    expect(result).toBeUndefined();
-    expect(entries).toHaveLength(0);
-  });
-
-  it("does not inject after the model has finished (stopReason stop before latest toolResult)", () => {
-    writeFileSync(join(cwd, ".pi", "preface.md"), "stay sharp");
-    const { pi, handlers, entries } = makePi();
-    const { ctx } = makeCtx(cwd, "openai-completions");
-    factory(pi);
-
-    handlers.session_start({ type: "session_start", reason: "startup" }, ctx);
-    // Model delivered a summary (stop), then continued with a read tool for
-    // some reason. The preface must NOT fire here — it would re-engage the
-    // model into a re-summarizing loop.
-    const messages = [
-      { role: "user", content: "do the thing" },
-      { role: "assistant", content: [{ type: "text", text: "Done." }], stopReason: "stop" },
-      { role: "assistant", content: [{ type: "toolCall" }], stopReason: "toolUse" },
-      { role: "toolResult", content: [{ type: "text", text: "read result" }] },
-    ];
-    const result = handlers.context({ type: "context", messages }, ctx);
-
-    expect(result).toBeUndefined();
-    expect(entries).toHaveLength(0);
-  });
-
-  it("does inject on a normal tool round (no stop since last user)", () => {
-    writeFileSync(join(cwd, ".pi", "preface.md"), "stay sharp");
-    const { pi, handlers, entries } = makePi();
-    const { ctx } = makeCtx(cwd, "openai-completions");
-    factory(pi);
-
-    handlers.session_start({ type: "session_start", reason: "startup" }, ctx);
-    const messages = [
-      { role: "user", content: "do the thing" },
-      { role: "assistant", content: [{ type: "toolCall" }], stopReason: "toolUse" },
-      { role: "toolResult", content: [{ type: "text", text: "result" }] },
-    ];
-    const result = handlers.context({ type: "context", messages }, ctx);
-
     expect(result).toBeDefined();
     expect(entries).toHaveLength(1);
+    const arr = result.messages[2].content as { type: string; text?: string }[];
+    expect(arr[0]).toEqual({ type: "text", text: "<turn-context>\nstay sharp\n</turn-context>" });
+    expect(arr[1]).toEqual({ type: "text", text: "result" });
   });
 
-  it("does not append when no content is configured", () => {
+  it("appends one entry per generation (every context event)", () => {
+    writeFileSync(join(cwd, ".pi", "preface.md"), "stay sharp");
+    const { pi, handlers, entries } = makePi();
+    const { ctx } = makeCtx(cwd);
+    factory(pi);
+
+    handlers.session_start({ type: "session_start", reason: "startup" }, ctx);
+    for (let i = 0; i < 5; i++) {
+      handlers.context({ type: "context", messages: [{ role: "user", content: "hi" }] }, ctx);
+    }
+
+    expect(entries).toHaveLength(5);
+  });
+
+  it("does not inject when no content is configured", () => {
     const { pi, handlers, entries } = makePi();
     const { ctx } = makeCtx(cwd);
     factory(pi);

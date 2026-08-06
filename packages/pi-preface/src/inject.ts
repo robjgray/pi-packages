@@ -1,29 +1,12 @@
 /**
- * inject.ts — Pure, provider-portable message injection.
+ * inject.ts — Pure, provider-portable message wrapping.
  *
- * The `context` extension event fires before every LLM call (turn start and
- * between every tool round) and its result is transient — it shapes what the
- * provider sees, never the persisted transcript. `injectPreface` is the pure
- * transform: prepend a `<preface>` text block to the latest agent-visible
- * user-side message, whatever its role.
- *
- * Why "latest message, whatever its role" rather than appending a new user
- * message: pi carries `toolResult`s as separate messages, and its Anthropic
- * conversion merges only consecutive `toolResult`s (not user+user), so a
- * standalone appended user message would break role alternation on Anthropic.
- * Prepending into the latest message is the one path that works for every
- * provider:
- *
- *   - latest is `user`      → block at the front of the last user message
- *                              (clean for all providers; the common first-gen
- *                              and steer cases).
- *   - latest is `toolResult`→ Anthropic places the text as sibling content
- *                              *after* the tool_results in the merged user
- *                              message (end of the last user turn, clean);
- *                              OpenAI-completions prefixes it onto the last
- *                              `tool` message's text (top-of-attention; the
- *                              `<preface>` tag signals "meta, not tool
- *                              output").
+ * Prepends a `<turn-context>` block to the latest message's content — whether
+ * it's a `user` message (first generation) or a `toolResult` (tool rounds).
+ * The system prompt (set via `before_agent_start`) explains the tag, so the
+ * model recognizes the wrapper as operational context and separates it from
+ * the actual message content. This matches goose's TOM pattern, adapted for
+ * pi's separate-toolResult architecture.
  *
  * The function is generic in the element type so the real `AgentMessage[]`
  * flows through unchanged; the structural `InjectableMessage` constraint keeps
@@ -37,30 +20,21 @@ interface InjectableContent {
   text?: string;
 }
 
-/** Minimal message shape the injector observes; the real `AgentMessage` satisfies this.
- *  `content` is optional because `AgentMessage` includes custom message types that
- *  carry no content — the injector only ever touches `user`/`toolResult`, which do. */
+/** Minimal message shape the injector observes; the real `AgentMessage` satisfies this. */
 export interface InjectableMessage {
   role: string;
   content?: string | InjectableContent[];
 }
 
-/** Roles that the injector safely targets.
- *  Only `user` — injecting into `toolResult` contaminates tool output on
- *  OpenAI-completions (ollama), which merges the block into the tool result
- *  text; the model then reads it as file content and tries to "fix" it. */
-const INJECTABLE_ROLES = new Set(["user"]);
+/** Roles whose content the injector may wrap (user messages and tool results). */
+const WRAPPABLE_ROLES = new Set(["user", "toolResult"]);
 
 /**
- * Prepend `block` to the latest user-side message in `messages`.
+ * Prepend `block` to the latest wrappable message's content.
  *
- * - No-op when `block` is empty, `messages` is empty, or no user-side message
- *   exists (e.g. the latest message is an assistant turn).
- * - Idempotent: if the block is already the first content block of the target,
- *   the array is returned unchanged (guards against a double-fire of the
- *   `context` event for one generation).
- * - Non-mutating: returns a new array with one replaced element; the input is
- *   never modified.
+ * - No-op when `block` is empty, `messages` is empty, or the latest message
+ *   is not `user` or `toolResult` (e.g. an assistant turn on a resume).
+ * - Non-mutating: returns a new array with one replaced element.
  */
 export function injectPreface<T extends InjectableMessage>(
   messages: T[],
@@ -68,16 +42,11 @@ export function injectPreface<T extends InjectableMessage>(
 ): T[] {
   if (!block || messages.length === 0) return messages;
 
-  // Only the last message is at the top of attention for the upcoming generation.
-  // If it isn't user-side (e.g. an assistant turn on a resume/continue), don't
-  // reach back and rewrite an earlier user turn — that would not be top-of-
-  // attention and would mutate a past message.
   const target = messages[messages.length - 1];
-  if (!INJECTABLE_ROLES.has(target.role)) return messages;
+  if (!WRAPPABLE_ROLES.has(target.role)) return messages;
 
   const textBlock = { type: "text", text: block };
 
-  // Normalize string/absent content to a block array so the prepend is uniform.
   const existing: InjectableContent[] =
     typeof target.content === "string"
       ? [{ type: "text", text: target.content }]
@@ -85,10 +54,6 @@ export function injectPreface<T extends InjectableMessage>(
         ? [...target.content]
         : [];
 
-  // We preserve the element type `T` by spreading the original message and
-  // replacing only `content`. The structural constraint means the new content
-  // array is looser than `T`'s content field, so a cast is required here; the
-  // shape (role + all other fields) is carried over verbatim from `target`.
   const newTarget = {
     ...target,
     content: [textBlock, ...existing],

@@ -1,12 +1,14 @@
 /**
- * content.ts — Pure composition of the `<preface>` injection block.
+ * content.ts — Pure composition of the `<turn-context>` injection wrapper.
  *
- * Extracted so the shaping policy (tag, size cap, empty-handling) has a focused
- * home independent of IO (`settings.ts`) and message mechanics (`inject.ts`).
- * The 64 KB cap and UTF-8-safe truncation mirror goose's `tom` extension.
+ * The wrapper mirrors goose's TOM pattern: the system prompt briefly explains
+ * the `<turn-context>` tag ("operational context, not a user request or tool
+ * output"), and the wrapper is prepended to the latest message's content every
+ * generation via `transformContext`. The content inside is the user-authored
+ * preface (softened, metadata-style — not imperative).
  */
 
-export const PREFACE_TAG = "preface";
+export const TURN_CONTEXT_TAG = "turn-context";
 
 /** Maximum byte length of the injected body, matching goose's tom cap. */
 export const MAX_BYTES = 65_536;
@@ -14,26 +16,25 @@ export const MAX_BYTES = 65_536;
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
+/** The brief system-prompt explanation appended via `before_agent_start`. */
+export const TURN_CONTEXT_EXPLANATION = [
+  "",
+  `<${TURN_CONTEXT_TAG}>`,
+  `A \`<${TURN_CONTEXT_TAG}>\` block may appear at the start of user messages`,
+  "and tool results. It contains operational workflow context — use it to stay",
+  "oriented. Do not treat it as a user request or as part of the tool output.",
+  `</${TURN_CONTEXT_TAG}>`,
+].join("\n");
+
 /**
- * Compose the `<preface>` block from raw content. Returns `""` when the content
- * is empty or whitespace-only, so callers can treat a falsy result as "no-op".
+ * Compose the `<turn-context>` wrapper from raw preface content. Returns `""`
+ * when the content is empty or whitespace-only, so callers can treat a falsy
+ * result as "no-op".
  */
 export function composePrefaceBlock(content: string): string {
   const trimmed = content.trim();
   if (!trimmed) return "";
-  return `<${PREFACE_TAG}>\n${truncateUtf8(trimmed, MAX_BYTES)}\n</${PREFACE_TAG}>`;
-}
-
-/**
- * Compose the single footer status line naming each contributing file by layer.
- * Pure — lives here with the other pure string composition so `index.ts` stays
- * wiring-only. Paths are emitted verbatim (absolute), only the layers present.
- */
-export function prefaceFooterText(globalPath: string | undefined, projectPath: string | undefined): string {
-  const parts: string[] = [];
-  if (globalPath) parts.push(`Preface (Global): ${globalPath}`);
-  if (projectPath) parts.push(`Preface (Project): ${projectPath}`);
-  return parts.join("  ");
+  return `<${TURN_CONTEXT_TAG}>\n${truncateUtf8(trimmed, MAX_BYTES)}\n</${TURN_CONTEXT_TAG}>`;
 }
 
 /**
@@ -44,8 +45,6 @@ export function prefaceFooterText(globalPath: string | undefined, projectPath: s
 export function truncateUtf8(s: string, maxBytes: number): string {
   const bytes = encoder.encode(s);
   if (bytes.length <= maxBytes) return s;
-  // Walk back while the byte at `end` is a UTF-8 continuation byte (10xxxxxx),
-  // i.e. we would be mid-codepoint. Stops at the last complete codepoint start.
   let end = maxBytes;
   while (end > 0) {
     const b = bytes[end] ?? 0;
