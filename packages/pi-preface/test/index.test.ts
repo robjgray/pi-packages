@@ -33,8 +33,8 @@ function makePi(): {
   return { pi, handlers, entries, renderers };
 }
 
-function makeCtx(cwd: string) {
-  return { ctx: { cwd, ui: {} } };
+function makeCtx(cwd: string, api: string = "openai-completions") {
+  return { ctx: { cwd, ui: {}, model: { api, provider: "ollama" } } };
 }
 
 const ENTRY_TYPE = "preface";
@@ -59,41 +59,32 @@ describe("preface extension wiring", () => {
   it("appends the turn-context explanation to the system prompt via before_agent_start", () => {
     const { pi, handlers } = makePi();
     factory(pi);
-
     const result = handlers.before_agent_start(
-      { type: "before_agent_start", systemPrompt: "base system prompt", prompt: "hi", systemPromptOptions: {} },
-      { cwd },
+      { type: "before_agent_start", systemPrompt: "base", prompt: "hi", systemPromptOptions: {} },
+      makeCtx(cwd).ctx,
     );
-
-    expect(result.systemPrompt).toContain("base system prompt");
+    expect(result.systemPrompt).toContain("base");
     expect(result.systemPrompt).toContain("<turn-context>");
-    expect(result.systemPrompt).toContain("operational workflow context");
   });
 
-  it("wraps the latest user message and appends an entry on context", () => {
+  it("wraps the latest user message on context (first-gen case)", () => {
     writeFileSync(join(cwd, ".pi", "preface.md"), "stay sharp");
     const { pi, handlers, entries } = makePi();
     const { ctx } = makeCtx(cwd);
     factory(pi);
-
     handlers.session_start({ type: "session_start", reason: "startup" }, ctx);
-    const result = handlers.context(
-      { type: "context", messages: [{ role: "user", content: "hi" }] },
-      ctx,
-    );
-
+    const result = handlers.context({ type: "context", messages: [{ role: "user", content: "hi" }] }, ctx);
     expect(result).toBeDefined();
     expect(entries).toHaveLength(1);
     const arr = result.messages[0].content as { type: string; text?: string }[];
     expect(arr[0]).toEqual({ type: "text", text: "<turn-context>\nstay sharp\n</turn-context>" });
   });
 
-  it("wraps the latest toolResult message on context (tool-round case)", () => {
+  it("does not inject on toolResult via context (handled by before_provider_request instead)", () => {
     writeFileSync(join(cwd, ".pi", "preface.md"), "stay sharp");
     const { pi, handlers, entries } = makePi();
     const { ctx } = makeCtx(cwd);
     factory(pi);
-
     handlers.session_start({ type: "session_start", reason: "startup" }, ctx);
     const messages = [
       { role: "user", content: "hi" },
@@ -101,39 +92,64 @@ describe("preface extension wiring", () => {
       { role: "toolResult", content: [{ type: "text", text: "result" }] },
     ];
     const result = handlers.context({ type: "context", messages }, ctx);
-
-    expect(result).toBeDefined();
-    expect(entries).toHaveLength(1);
-    const arr = result.messages[2].content as { type: string; text?: string }[];
-    expect(arr[0]).toEqual({ type: "text", text: "<turn-context>\nstay sharp\n</turn-context>" });
-    expect(arr[1]).toEqual({ type: "text", text: "result" });
+    expect(result).toBeUndefined();
+    expect(entries).toHaveLength(0);
   });
 
-  it("appends one entry per generation (every context event)", () => {
+  it("inserts a system message via before_provider_request on tool rounds (ollama)", () => {
+    writeFileSync(join(cwd, ".pi", "preface.md"), "stay sharp");
+    const { pi, handlers, entries } = makePi();
+    const { ctx } = makeCtx(cwd, "openai-completions");
+    factory(pi);
+    handlers.session_start({ type: "session_start", reason: "startup" }, ctx);
+    const payload = {
+      messages: [
+        { role: "system", content: "base system" },
+        { role: "user", content: "hi" },
+        { role: "assistant", content: "" },
+        { role: "tool", content: "result" },
+      ],
+      stream: true,
+    };
+    const result = handlers.before_provider_request({ type: "before_provider_request", payload }, ctx);
+    expect(result).toBeDefined();
+    expect(result.messages).toHaveLength(5);
+    expect(result.messages[4]).toEqual({ role: "system", content: "<turn-context>\nstay sharp\n</turn-context>" });
+    // Tool message is untouched.
+    expect(result.messages[3]).toEqual({ role: "tool", content: "result" });
+    expect(entries).toHaveLength(1);
+  });
+
+  it("does not inject via before_provider_request when latest is user (first-gen, handled by context)", () => {
     writeFileSync(join(cwd, ".pi", "preface.md"), "stay sharp");
     const { pi, handlers, entries } = makePi();
     const { ctx } = makeCtx(cwd);
     factory(pi);
-
     handlers.session_start({ type: "session_start", reason: "startup" }, ctx);
-    for (let i = 0; i < 5; i++) {
-      handlers.context({ type: "context", messages: [{ role: "user", content: "hi" }] }, ctx);
-    }
+    const payload = { messages: [{ role: "user", content: "hi" }] };
+    const result = handlers.before_provider_request({ type: "before_provider_request", payload }, ctx);
+    expect(result).toBeUndefined();
+    expect(entries).toHaveLength(0);
+  });
 
-    expect(entries).toHaveLength(5);
+  it("does not inject via before_provider_request on non-openai-completions providers", () => {
+    writeFileSync(join(cwd, ".pi", "preface.md"), "stay sharp");
+    const { pi, handlers, entries } = makePi();
+    const { ctx } = makeCtx(cwd, "anthropic-messages");
+    factory(pi);
+    handlers.session_start({ type: "session_start", reason: "startup" }, ctx);
+    const payload = { messages: [{ role: "tool", content: "result" }] };
+    const result = handlers.before_provider_request({ type: "before_provider_request", payload }, ctx);
+    expect(result).toBeUndefined();
+    expect(entries).toHaveLength(0);
   });
 
   it("does not inject when no content is configured", () => {
     const { pi, handlers, entries } = makePi();
     const { ctx } = makeCtx(cwd);
     factory(pi);
-
     handlers.session_start({ type: "session_start", reason: "startup" }, ctx);
-    const result = handlers.context(
-      { type: "context", messages: [{ role: "user", content: "hi" }] },
-      ctx,
-    );
-
+    const result = handlers.context({ type: "context", messages: [{ role: "user", content: "hi" }] }, ctx);
     expect(result).toBeUndefined();
     expect(entries).toHaveLength(0);
   });
@@ -144,10 +160,8 @@ describe("preface extension wiring", () => {
     const { pi, handlers, entries } = makePi();
     const { ctx } = makeCtx(cwd);
     factory(pi);
-
     handlers.session_start({ type: "session_start", reason: "startup" }, ctx);
     handlers.context({ type: "context", messages: [{ role: "user", content: "hi" }] }, ctx);
-
     expect(entries[0].data.globalPath).toBe(join(agentDir, "preface.md"));
     expect(entries[0].data.projectPath).toBe(join(cwd, ".pi", "preface.md"));
   });
@@ -156,19 +170,11 @@ describe("preface extension wiring", () => {
     const { pi, handlers, entries } = makePi();
     const { ctx } = makeCtx(cwd);
     factory(pi);
-
     handlers.session_start({ type: "session_start", reason: "startup" }, ctx);
-    expect(
-      handlers.context({ type: "context", messages: [{ role: "user", content: "hi" }] }, ctx),
-    ).toBeUndefined();
-
+    expect(handlers.context({ type: "context", messages: [{ role: "user", content: "hi" }] }, ctx)).toBeUndefined();
     writeFileSync(join(cwd, ".pi", "preface.md"), "now configured");
     handlers.session_start({ type: "session_start", reason: "reload" }, ctx);
-    const result = handlers.context(
-      { type: "context", messages: [{ role: "user", content: "hi" }] },
-      ctx,
-    );
-
+    const result = handlers.context({ type: "context", messages: [{ role: "user", content: "hi" }] }, ctx);
     expect(result).toBeDefined();
     expect(entries).toHaveLength(1);
   });

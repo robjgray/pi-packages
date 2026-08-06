@@ -26,8 +26,9 @@ export interface InjectableMessage {
   content?: string | InjectableContent[];
 }
 
-/** Roles whose content the injector may wrap (user messages and tool results). */
-const WRAPPABLE_ROLES = new Set(["user", "toolResult"]);
+/** Only user — injecting into toolResult contaminates tool output on ollama
+ *  (the model reads the wrapper as file content and tries to strip it). */
+const WRAPPABLE_ROLES = new Set(["user"]);
 
 /**
  * Prepend `block` to the latest wrappable message's content.
