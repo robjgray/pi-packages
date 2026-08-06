@@ -1,0 +1,61 @@
+{
+  "name": "@gotgenes/pi-path-recovery",
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "default": "./src/index.ts"
+    }
+  },
+  "imports": {
+    "#src/*": "./src/*",
+    "#test/*": "./test/*"
+  },
+  "description": "Fuzzy path recovery for pi — wraps read/write/edit with 'Did you mean?' suggestions when the model garbles paths, preventing silent wrong-directory writes and multi-turn ENOENT loops.",
+  "author": {
+    "name": "Chris Lasher"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gotgenes/pi-packages.git",
+    "directory": "packages/pi-path-recovery"
+  },
+  "homepage": "https://github.com/gotgenes/pi-packages/tree/main/packages/pi-path-recovery#readme",
+  "bugs": {
+    "url": "https://github.com/gotgenes/pi-packages/issues"
+  },
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "path-recovery",
+    "fuzzy-matching",
+    "did-you-mean"
+  ],
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": ">=0.80.5"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "catalog:",
+    "@earendil-works/pi-coding-agent": "0.80.5",
+    "@types/node": "catalog:",
+    "rumdl": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint:md": "rumdl check *.md",
+    "lint": "biome check . && pnpm run lint:md"
+  }
+}
