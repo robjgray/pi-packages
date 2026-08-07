@@ -137,7 +137,7 @@ export class SubagentsSettingsHandler {
     const options = SETTINGS.map(
       (d) => `${d.label} (current: ${d.currentDisplay(this.settings)})`,
     );
-    const choice = await ui.select("Settings", options);
+    const choice = await ui.select("Settings (robjgray fork)", options);
     if (!choice) return;
 
     const descriptor = SETTINGS.find((d) => choice.startsWith(d.label));
