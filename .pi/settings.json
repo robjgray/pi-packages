@@ -1,7 +1,7 @@
 {
   "packages": [
     "../packages/pi-preface",
-    "../packages/pi-path-recovery",
+    "../packages/pi-tanium",
     "../packages/pi-subagents"
   ]
 }

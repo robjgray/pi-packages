@@ -16,6 +16,7 @@ Some packages (like pi-permission-system) are designed for broad use; others scr
 | [@gotgenes/pi-session-tools](./packages/pi-session-tools/)                   | Session naming and context bridge for multi-session workflows  | [![npm](https://img.shields.io/npm/dm/@gotgenes/pi-session-tools)](https://www.npmjs.com/package/@gotgenes/pi-session-tools)                   |
 | [@gotgenes/pi-subagents-worktrees](./packages/pi-subagents-worktrees/)       | Git worktree isolation WorkspaceProvider for pi-subagents      | [![npm](https://img.shields.io/npm/dm/@gotgenes/pi-subagents-worktrees)](https://www.npmjs.com/package/@gotgenes/pi-subagents-worktrees)       |
 | [@gotgenes/pi-nocd](./packages/pi-nocd/)                                     | System-prompt guard against cd-prefixing the working directory | [![npm](https://img.shields.io/npm/dm/@gotgenes/pi-nocd)](https://www.npmjs.com/package/@gotgenes/pi-nocd)                                     |
+| [@gotgenes/pi-tanium](./packages/pi-tanium/)                                 | Hardened edit/read/write for small-model pi agents (fuzzy/shape-recovered edit, line-numbered read, write-loop guard) | [![npm](https://img.shields.io/npm/dm/@gotgenes/pi-tanium)](https://www.npmjs.com/package/@gotgenes/pi-tanium)                                 |
 
 Each package has its own README with setup instructions, usage, and configuration details.
 
@@ -214,7 +215,7 @@ Load the relevant skill before working on a package:
 - `package-pi-permission-system` — for `packages/pi-permission-system/`
 - `package-pi-subagents` — for `packages/pi-subagents/`
 
-The remaining packages (`pi-colgrep`, `pi-session-tools`, `pi-subagents-worktrees`, `pi-nocd`, `pi-permission-model-judge`) have no dedicated skill — their READMEs cover everything you need.
+The remaining packages (`pi-tanium`, `pi-colgrep`, `pi-session-tools`, `pi-subagents-worktrees`, `pi-nocd`, `pi-permission-model-judge`) have no dedicated skill — their READMEs cover everything you need.
 
 ## License
 

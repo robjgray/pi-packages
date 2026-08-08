@@ -28,6 +28,9 @@
     },
     "packages/pi-subagents-worktrees": {
       "component": "pi-subagents-worktrees"
+    },
+    "packages/pi-tanium": {
+      "component": "pi-tanium"
     }
   },
   "exclude-paths": [

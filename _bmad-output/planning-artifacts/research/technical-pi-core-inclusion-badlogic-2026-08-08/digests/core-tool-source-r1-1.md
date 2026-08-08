@@ -1,0 +1,24 @@
+# Digest: core-tool-source (round 1)
+
+Sources (retrieved 2026-08-08 via gh api from github.com/earendil-works/pi, packages/coding-agent/src/core/tools/):
+- read.ts (356 lines), edit.ts (441), edit-diff.ts (560), write.ts (272), file-mutation-queue.ts (61), index.ts.
+- Package version installed locally: @earendil-works/pi-coding-agent@0.80.5 (node_modules) — corroborates the source shapes.
+Publisher: earendil-works/pi project (MIT). Confidence: high (primary, the actual core code).
+
+These files are decisive for the user's decision because they show exactly what the maintainer put in core and what the core deliberately does NOT do.
+
+## Load-bearing claims (mapped to the user's six features)
+
+- [C19] Fuzzy-tolerant edit IS IN CORE. edit-diff.ts exports `fuzzyFindText()` and `normalizeForFuzzyMatch()` (trailing-whitespace trim, smart-quote -> ASCII, Unicode dash/space normalization, NFKC). edit.ts `applyEditsToNormalizedContent()` tries exact match first, then fuzzy; when fuzzy is used it overlays line-level changes onto original content via `applyReplacementsPreservingUnchangedLines()` so untouched lines keep their original bytes. => A "fuzzy-tolerant edit override" extension duplicates core. A core CONTRIBUTION that extends `normalizeForFuzzyMatch` to a new normalization dimension (e.g., indentation) could fit (it improves an existing core feature); a standalone extension re-implementing fuzzy is bloat.
+- [C20] Edit shape-recovery IS IN CORE. edit.ts `prepareArguments()` (the `prepareArguments` hook) recovers legacy `oldText`/`newText` -> `edits[]` and parses JSON-string `edits` some models emit. Documented in extensions.md as the pattern for resuming older sessions whose stored args no longer match the current schema. => "edit shape-recovery" is core-worthy and already present; a duplicate contribution is rejected.
+- [C21] per-edit replaceAll IS DELIBERATELY REJECTED IN CORE. edit-diff.ts `countOccurrences()`; `applyEditsToNormalizedContent()` throws `getDuplicateError()` when `occurrences > 1`: "Found N occurrences... The text must be unique. Please provide more context to make it unique." Uniqueness is an intentional invariant (predictability: the agent knows exactly which occurrence changed). => A core PR adding replaceAll contradicts a design decision and is rejected. Belongs as an extension (custom tool or edit override).
+- [C22] Similar-lines edit errors ARE NOT IN CORE. The not-found error (`getNotFoundError`) is generic: "Could not find the exact text in <path>. The old text must match exactly including all whitespace and newlines." No Levenshtein/similar-line suggestions. The model is expected to re-read the file to recover. => Borderline; see analysis. Fires only on error (no per-call context overhead), improves an existing core tool's error UX, universal across agents — arguable core-worthy by the "improve existing core" path, but the maintainer kept it generic deliberately and the bar is "if I don't need it." Safer as an extension override.
+- [C23] cat-n line numbering for read IS NOT IN CORE. read.ts returns raw file content with `offset`/`limit` paging and truncation notices ("Showing lines A-B of N. Use offset=B+1 to continue."). No line-number prefixes in the content sent to the LLM (line numbers appear only in the *edit diff* display, not in read output). Adding line numbers to every read adds per-call context overhead (token-cost criterion C5) and is a presentation preference, not a universal agent-program benefit. => Extension-bloat for core; belongs as a read override extension (the override mechanism is documented, examples/extensions/tool-override.ts).
+- [C24] write rewrite-loop guard IS NOT IN CORE. write.ts creates parent dirs, writes content, participates in `withFileMutationQueue`; no convergence/identical-content/loop detection. The guideline is "Use write only for new files or complete rewrites." Core is YOLO by default (C11) with no safety rails. A write-loop guard is a safety/UX feature, not universal, and aligns with the rejected "safety theater" stance. => Extension-bloat for core; belongs as a write override or a `tool_call` event-gate extension.
+- [C25] Core tool set is exactly: read, write, edit, bash (+ optional grep, find, ls), with `truncate`/`file-mutation-queue`/`path-utils`/`render-utils`/`tool-definition-wrapper`/`edit-diff` support modules (index.ts). This matches the blog's "minimal toolset" claim (C3) and confirms the positive core criterion: a tool/feature is core-worthy only if it is a universal file/shell primitive every agent program needs, with minimal per-call context overhead.
+
+## Leads
+- grep.ts/find.ts/ls.ts confirm the read-only auxiliary tools; not decision-relevant here.
+
+## Could not find
+- No core test asserting the uniqueness invariant, but the throw is in the production path (edit-diff.ts).

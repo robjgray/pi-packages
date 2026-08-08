@@ -1,7 +1,10 @@
 {
-  "name": "@gotgenes/pi-path-recovery",
-  "version": "0.1.0",
+  "name": "@gotgenes/pi-tanium",
+  "version": "0.0.0",
   "type": "module",
+  "files": [
+    "src"
+  ],
   "exports": {
     ".": {
       "default": "./src/index.ts"
@@ -11,7 +14,7 @@
     "#src/*": "./src/*",
     "#test/*": "./test/*"
   },
-  "description": "Fuzzy path recovery for pi — wraps read/write/edit with 'Did you mean?' suggestions when the model garbles paths, preventing silent wrong-directory writes and multi-turn ENOENT loops.",
+  "description": "Hardens the file operations a small-model pi agent depends on — fuzzy/shape-recovered `edit` with per-edit `replaceAll` and similar-lines not-found errors, `cat -n` line-numbered `read`, a soft `write` rewrite-loop guard, and the inherited path `Did you mean?` recovery.",
   "author": {
     "name": "Chris Lasher"
   },
@@ -19,29 +22,38 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/gotgenes/pi-packages.git",
-    "directory": "packages/pi-path-recovery"
+    "directory": "packages/pi-tanium"
   },
-  "homepage": "https://github.com/gotgenes/pi-packages/tree/main/packages/pi-path-recovery#readme",
+  "homepage": "https://github.com/gotgenes/pi-packages/tree/main/packages/pi-tanium#readme",
   "bugs": {
     "url": "https://github.com/gotgenes/pi-packages/issues"
   },
   "keywords": [
     "pi-package",
     "pi-extension",
-    "path-recovery",
+    "edit",
     "fuzzy-matching",
-    "did-you-mean"
+    "read",
+    "write",
+    "did-you-mean",
+    "path-recovery"
   ],
   "pi": {
     "extensions": [
       "./src/index.ts"
     ]
   },
+  "dependencies": {
+    "@sinclair/typebox": "^0.34.49"
+  },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": ">=0.80.5"
   },
   "engines": {
     "node": ">=22"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "devDependencies": {
     "@biomejs/biome": "catalog:",
