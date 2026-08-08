@@ -4,9 +4,12 @@
  * The wrapper mirrors goose's TOM pattern: the system prompt briefly explains
  * the `<turn-context>` tag ("operational context, not a user request or tool
  * output"), and the wrapper is prepended to the latest message's content every
- * generation via `transformContext`. The content inside is the user-authored
- * preface (softened, metadata-style — not imperative).
+ * generation. The content inside is the concatenated `body`s of the active
+ * preface entries (already filtered by condition by the caller), in
+ * declaration order — metadata-style prompt prose, not imperative.
  */
+
+import type { PrefaceEntry } from "#src/schema";
 
 export const TURN_CONTEXT_TAG = "turn-context";
 
@@ -27,14 +30,18 @@ export const TURN_CONTEXT_EXPLANATION = [
 ].join("\n");
 
 /**
- * Compose the `<turn-context>` wrapper from raw preface content. Returns `""`
- * when the content is empty or whitespace-only, so callers can treat a falsy
- * result as "no-op".
+ * Compose the `<turn-context>` wrapper from the active preface entries.
+ * Concatenates each entry's `body` (trimmed) in declaration order, separated
+ * by blank lines. Returns `""` when there are no entries or all bodies are
+ * empty/whitespace-only, so callers can treat a falsy result as "no-op".
  */
-export function composePrefaceBlock(content: string): string {
-  const trimmed = content.trim();
-  if (!trimmed) return "";
-  return `<${TURN_CONTEXT_TAG}>\n${truncateUtf8(trimmed, MAX_BYTES)}\n</${TURN_CONTEXT_TAG}>`;
+export function composePrefaceBlock(entries: PrefaceEntry[]): string {
+  const bodies = entries
+    .map((e) => e.body.trim())
+    .filter((b) => b.length > 0);
+  if (bodies.length === 0) return "";
+  const joined = bodies.join("\n\n");
+  return `<${TURN_CONTEXT_TAG}>\n${truncateUtf8(joined, MAX_BYTES)}\n</${TURN_CONTEXT_TAG}>`;
 }
 
 /**
