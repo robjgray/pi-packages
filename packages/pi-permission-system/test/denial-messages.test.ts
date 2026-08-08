@@ -328,6 +328,19 @@ describe("formatDenyReason", () => {
         "[pi-permission-system] Agent 'my-agent' is not permitted to access path '/etc/passwd' via tool 'bash'.",
       );
     });
+
+    test("surfaces a configured deny reason after the period", () => {
+      expect(
+        formatDenyReason({
+          kind: "bash_path",
+          command: "echo x > main.go",
+          pathValue: "main.go",
+          reason: "Use the edit tool, not bash redirects",
+        }),
+      ).toBe(
+        "[pi-permission-system] Current agent is not permitted to access path 'main.go' via tool 'bash'. Reason: Use the edit tool, not bash redirects.",
+      );
+    });
   });
 
   describe("skill_read context", () => {
@@ -469,6 +482,19 @@ describe("formatUnavailableReason", () => {
       }),
     ).toBe(
       "[pi-permission-system] Bash command 'cat /etc/passwd' accesses path '/etc/passwd' which requires approval, but no interactive UI is available.",
+    );
+  });
+
+  test("bash_path surfaces a configured deny reason", () => {
+    expect(
+      formatUnavailableReason({
+        kind: "bash_path",
+        command: "echo x > main.go",
+        pathValue: "main.go",
+        reason: "Use the edit tool, not bash redirects",
+      }),
+    ).toBe(
+      "[pi-permission-system] Bash command 'echo x > main.go' accesses path 'main.go' which requires approval, but no interactive UI is available. Reason: Use the edit tool, not bash redirects.",
     );
   });
 

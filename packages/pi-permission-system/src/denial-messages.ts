@@ -56,6 +56,8 @@ export type DenialContext =
       command: string;
       pathValue: string;
       agentName?: string;
+      /** Configured deny reason from the matched `bash_path` rule, if any. */
+      reason?: string;
     }
   | {
       kind: "skill_read";
@@ -110,7 +112,7 @@ function buildDenyBody(ctx: DenialContext): string {
     case "bash_external_directory":
       return `${subject(ctx.agentName)} is not permitted to run bash command '${ctx.command}' which references path(s) outside working directory '${ctx.cwd}': ${formatExternalPathList(ctx.externalPaths)}.`;
     case "bash_path":
-      return `${subject(ctx.agentName)} is not permitted to access path '${ctx.pathValue}' via tool 'bash'.`;
+      return `${subject(ctx.agentName)} is not permitted to access path '${ctx.pathValue}' via tool 'bash'.${reasonSuffix(ctx.reason)}`;
     case "skill_read":
       return `${subject(ctx.agentName)} is not permitted to access skill '${ctx.skillName}' via '${ctx.readPath}'.`;
     case "skill_input":
@@ -206,7 +208,7 @@ function buildUnavailableBody(ctx: DenialContext): string {
     case "bash_external_directory":
       return `Bash command '${ctx.command}' references path(s) outside the working directory and requires approval, but no interactive UI is available.`;
     case "bash_path":
-      return `Bash command '${ctx.command}' accesses path '${ctx.pathValue}' which requires approval, but no interactive UI is available.`;
+      return `Bash command '${ctx.command}' accesses path '${ctx.pathValue}' which requires approval, but no interactive UI is available.${reasonSuffix(ctx.reason)}`;
     case "skill_read":
       return `Accessing skill '${ctx.skillName}' requires approval, but no interactive UI is available.`;
     case "skill_input":

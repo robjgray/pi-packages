@@ -106,8 +106,16 @@ describe("resolveBashAdvisoryCheck", () => {
       const result = resolveBashAdvisoryCheck("> out.txt", undefined, resolver);
       expect(result.state).toBe("ask");
       expect(result.matchedPattern).toBe("<unparseable-bash-command>");
-      // The synthetic fail-closed decision does not consult the resolver.
-      expect(resolver.resolve).not.toHaveBeenCalled();
+      // B′: the raw command is resolved on the `bash` surface so a `deny`
+      // pattern catches an unparseable command's raw string; the stub returns
+      // allow (no `deny`), so the fail-closed `ask` floor still applies.
+      expect(resolver.resolve).toHaveBeenCalledTimes(1);
+      expect(resolver.resolve).toHaveBeenCalledWith({
+        kind: "tool",
+        surface: "bash",
+        input: { command: "> out.txt" },
+        agentName: undefined,
+      });
     });
 
     it("evaluates a nested command inside a substitution", () => {

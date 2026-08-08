@@ -9,8 +9,45 @@ import type { TSNode } from "#src/access-intent/bash/parser";
 // ── Public surface ─────────────────────────────────────────────────────────
 
 /**
+ * Where a collected token came from in the bash AST.
+ *
+ * - `argument` — a command argument (a bare filename the command reads, e.g.
+ *   `cat .env`). These are bash *reads* and resolve against the cross-cutting
+ *   `path` surface in the `bash_path` gate (B′): a `bash_path` deny must not
+ *   block them.
+ * - `redirect` — a `file_redirect` destination for a **write** operator
+ *   (`>`/`>>`/`&>`/`&>>`, e.g. `echo x > main.go`). These resolve against
+ *   the `bash_path` surface (most-restrictive with `path`) in the `bash_path`
+ *   gate (B′): a `bash_path` deny blocks the redirect without blocking
+ *   `edit`/`write`.
+ * - a `file_redirect` destination for a **read** operator (`<`/`<&`/`<<<`,
+ *   e.g. `cat < .env`) is tagged `argument` too — it is a bash *read* and
+ *   resolves against the cross-cutting `path` surface, so a `bash_path` deny
+ *   must not block it.
+ */
+export type TokenOrigin = "redirect" | "argument";
+
+/** A path-candidate token paired with its AST origin (read argument vs write redirect). */
+export interface CollectedToken {
+  readonly token: string;
+  readonly origin: TokenOrigin;
+}
+
+/** Tag a command-argument token (a bash read). */
+function arg(token: string): CollectedToken {
+  return { token, origin: "argument" };
+}
+
+/** Tag a redirect-destination token (a bash write). */
+function redirect(token: string): CollectedToken {
+  return { token, origin: "redirect" };
+}
+
+/**
  * Recursively visit the AST and collect resolved text of nodes that
- * represent command arguments or redirect destinations.
+ * represent command arguments or redirect destinations, tagged with their
+ * origin so the `bash_path` gate can route reads to `path` and writes to
+ * `bash_path` (B′).
  *
  * Skips `heredoc_body`, `heredoc_end`, and `comment` subtrees entirely.
  *
@@ -19,12 +56,12 @@ import type { TSNode } from "#src/access-intent/bash/parser";
  * as path candidates. For all other commands, collects all
  * arguments generically.
  */
-export function collectPathCandidateTokens(node: TSNode): string[] {
+export function collectPathCandidateTokens(node: TSNode): CollectedToken[] {
   if (SKIP_SUBTREE_TYPES.has(node.type)) return [];
   if (node.type === "command") return collectCommandTokens(node);
   if (node.type === "file_redirect") return collectRedirectTokens(node);
 
-  const tokens: string[] = [];
+  const tokens: CollectedToken[] = [];
   for (let i = 0; i < node.childCount; i++) {
     const child = node.child(i);
     if (child) tokens.push(...collectPathCandidateTokens(child));
@@ -37,7 +74,7 @@ export function collectPathCandidateTokens(node: TSNode): string[] {
  * commands use `collectPatternCommandTokens`; all others use
  * `collectGenericCommandTokens`.
  */
-export function collectCommandTokens(node: TSNode): string[] {
+export function collectCommandTokens(node: TSNode): CollectedToken[] {
   const commandName = extractCommandName(node);
   const config = commandName
     ? PATTERN_FIRST_COMMANDS.get(commandName)
@@ -49,18 +86,53 @@ export function collectCommandTokens(node: TSNode): string[] {
 }
 
 /**
- * Collect redirect-destination tokens from a `file_redirect` node.
+ * Collect redirect-destination tokens from a `file_redirect` node, tagged by
+ * operator: a **read** operator (`<`, `<&`, `<<<`) tags the destination
+ * as `argument` (a bash read, routed to `path`); a **write** operator (`>`,
+ * `>>`, `&>`, `&>>`, `<>`) tags it as `redirect` (a bash write, routed to
+ * `bash_path`). An unrecognized operator defaults to `redirect` (write) to
+ * stay conservative (P2).
  */
-export function collectRedirectTokens(node: TSNode): string[] {
-  const tokens: string[] = [];
+export function collectRedirectTokens(node: TSNode): CollectedToken[] {
+  const operator = redirectOperator(node);
+  const tag =
+    operator !== undefined && isReadRedirectOperator(operator) ? arg : redirect;
+  const tokens: CollectedToken[] = [];
   for (let i = 0; i < node.childCount; i++) {
     const child = node.child(i);
     if (!child) continue;
     if (ARG_NODE_TYPES.has(child.type)) {
-      tokens.push(resolveNodeText(child));
+      tokens.push(tag(resolveNodeText(child)));
     }
   }
   return tokens;
+}
+
+/**
+ * Find the operator token of a `file_redirect` node — the child that is
+ * neither a `file_descriptor` prefix (e.g. `0<`, `1>`) nor the destination
+ * argument. Its `.text` is the redirect operator (`<`, `>`, `>>`, `&>`,
+ * `&>>`, `<&`, `<<<`, `<>`, …).
+ */
+function redirectOperator(node: TSNode): string | undefined {
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (!child) continue;
+    if (child.type === "file_descriptor") continue;
+    if (ARG_NODE_TYPES.has(child.type)) continue;
+    if (SKIP_SUBTREE_TYPES.has(child.type)) continue;
+    return child.text;
+  }
+  return undefined;
+}
+
+/**
+ * A read redirect opens the destination for input: the operator starts with
+ * `<` and does not also write (`<`, `<&`, `<<<`). An operator that
+ * contains `>` (`>`, `>>`, `&>`, `&>>`, `<>`) writes, so it is not a read.
+ */
+function isReadRedirectOperator(operator: string): boolean {
+  return operator.startsWith("<") && !operator.includes(">");
 }
 
 /**
@@ -103,8 +175,8 @@ const OPTION_VALUE_PATTERN = /^-{1,2}[^=\s]+=(.+)$/;
  * here is what lets the projection see option-embedded paths without per-command
  * option tables (ADR 0009, #645).
  */
-function collectEmbeddedOptionValues(node: TSNode): string[] {
-  const values: string[] = [];
+function collectEmbeddedOptionValues(node: TSNode): CollectedToken[] {
+  const values: CollectedToken[] = [];
   for (let i = 0; i < node.childCount; i++) {
     const child = node.child(i);
     if (!child) continue;
@@ -113,7 +185,7 @@ function collectEmbeddedOptionValues(node: TSNode): string[] {
     if (!ARG_NODE_TYPES.has(child.type)) continue;
 
     const value = OPTION_VALUE_PATTERN.exec(resolveNodeText(child))?.[1];
-    if (value !== undefined) values.push(value);
+    if (value !== undefined) values.push(arg(value));
   }
   return values;
 }
@@ -277,13 +349,13 @@ function classifyPatternCommandFlag(
 function collectPatternCommandTokens(
   node: TSNode,
   config: PatternCommandConfig,
-): string[] {
+): CollectedToken[] {
   const patternPositionals = config.patternPositionals ?? 1;
   let hasExplicitScript = false;
   let positionalsSeen = 0;
   let nextArgAction: "skip" | "extract" | null = null;
   let pastEndOfFlags = false;
-  const tokens: string[] = [];
+  const tokens: CollectedToken[] = [];
 
   for (let i = 0; i < node.childCount; i++) {
     const child = node.child(i);
@@ -308,7 +380,7 @@ function collectPatternCommandTokens(
       continue;
     }
     if (nextArgAction === "extract") {
-      tokens.push(text);
+      tokens.push(arg(text));
       nextArgAction = null;
       continue;
     }
@@ -342,7 +414,7 @@ function collectPatternCommandTokens(
     }
 
     // File argument — collect as path candidate.
-    tokens.push(text);
+    tokens.push(arg(text));
   }
 
   return tokens;
@@ -352,8 +424,8 @@ function collectPatternCommandTokens(
  * Collect all argument tokens from a generic (non-pattern-first) command node,
  * skipping the command name and variable assignments.
  */
-function collectGenericCommandTokens(node: TSNode): string[] {
-  const tokens: string[] = [];
+function collectGenericCommandTokens(node: TSNode): CollectedToken[] {
+  const tokens: CollectedToken[] = [];
   let seenCommandName = false;
 
   for (let i = 0; i < node.childCount; i++) {
@@ -376,7 +448,7 @@ function collectGenericCommandTokens(node: TSNode): string[] {
 
     // Argument nodes: resolve their text and collect.
     if (ARG_NODE_TYPES.has(child.type)) {
-      tokens.push(resolveNodeText(child));
+      tokens.push(arg(resolveNodeText(child)));
       continue;
     }
 

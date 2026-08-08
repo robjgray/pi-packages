@@ -21,10 +21,14 @@ export const PATH_BEARING_TOOLS = new Set([
 /**
  * Surfaces whose patterns are matched against filesystem paths and therefore
  * fold case (and separators) on Windows: the path-bearing tools plus the
- * cross-cutting `path` gate and the `external_directory` boundary gate.
+ * cross-cutting `path` gate, the `external_directory` boundary gate, and the
+ * `bash_path` gate (bash redirect-target tokens). Membership also drives
+ * `evaluateAnyValue` (last-match-wins across path aliases) in the manager;
+ * non-path surfaces use `evaluateFirst`.
  */
 export const PATH_SURFACES: ReadonlySet<string> = new Set([
   ...PATH_BEARING_TOOLS,
   "external_directory",
   "path",
+  "bash_path",
 ]);

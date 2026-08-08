@@ -35,6 +35,19 @@
       "git diff": "allow",
       "npm *": { "action": "deny", "reason": "Use pnpm instead" }
     },
+    "bash_path": {
+      "*": "allow",
+      "*.env": "deny",
+      "*.env.*": "deny",
+      "*.go": {
+        "action": "deny",
+        "reason": "Redirecting bash output to a .go file is blocked. Use the edit or write tool."
+      },
+      "*.ts": {
+        "action": "deny",
+        "reason": "Redirecting bash output to a .ts file is blocked. Use the edit or write tool."
+      }
+    },
     "mcp": { "*": "ask", "mcp_status": "allow", "mcp_list": "allow" },
     "skill": { "*": "ask" },
     "external_directory": {

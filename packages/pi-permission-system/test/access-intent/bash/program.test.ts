@@ -24,6 +24,7 @@ import { createTmpFixture } from "#test/helpers/tmp-fixture";
 
 describe("BashProgram", () => {
   describe("pathRuleCandidates", () => {
+    // B′: each candidate carries an `origin` ("argument" for reads, "redirect" for writes).
     const cwd = "/projects/my-app";
     const normalizer = new PathNormalizer(
       pathFlavorForPlatform(process.platform),
@@ -44,6 +45,22 @@ describe("BashProgram", () => {
         "src/foo.ts",
       ]);
       expect(candidates[0].path.value()).toBe("/projects/my-app/src/foo.ts");
+    });
+
+    it("tags a command argument as a read and a redirect target as a write (B′)", async () => {
+      // `cat src/foo.ts > src/out.txt`: `src/foo.ts` is a command argument (a
+      // bash read, origin "argument"); `src/out.txt` is a file_redirect
+      // destination (a bash write, origin "redirect"). The bash_path gate
+      // routes them to different surfaces. (A path-shaped redirect target is
+      // used so it is extracted without an existence probe.)
+      const program = await BashProgram.parse(
+        "cat src/foo.ts > src/out.txt",
+        normalizer,
+      );
+      const candidates = program.pathRuleCandidates();
+      const byToken = new Map(candidates.map((c) => [c.token, c]));
+      expect(byToken.get("src/foo.ts")?.origin).toBe("argument");
+      expect(byToken.get("src/out.txt")?.origin).toBe("redirect");
     });
 
     it("resolves tokens after literal cd against the effective directory", async () => {

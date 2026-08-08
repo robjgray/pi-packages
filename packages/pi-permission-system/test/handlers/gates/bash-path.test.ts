@@ -103,6 +103,7 @@ describe("describeBashPathGate", () => {
     expect(result).not.toBeNull();
     expect(isGateDescriptor(result)).toBe(true);
     const desc = result as GateDescriptor;
+    // `cat .env` is a bash *read*; B′ routes reads to the `path` surface.
     expect(desc.surface).toBe("path");
     expect(desc.preCheck?.state).toBe("deny");
   });
@@ -136,6 +137,7 @@ describe("describeBashPathGate", () => {
       makeTcc(),
       makeResolver(makeCheckResult({ state: "deny", matchedPattern: "*.env" })),
     )) as GateDescriptor;
+    // `cat .env` is a bash *read*; B′ routes reads to the `path` surface.
     expect(result.decision.surface).toBe("path");
   });
 
@@ -149,6 +151,8 @@ describe("describeBashPathGate", () => {
     const intent = resolver.resolve.mock.calls.at(-1)?.[0];
     const path = intent?.kind === "access-path" ? intent.path : undefined;
     expect(path).toBeDefined();
+    // `cat .env` is a bash *read*; B′ routes reads to the `path` surface, so
+    // the deciding surface and access-intent facts both report `path`.
     expect(result.promptDetails.accessIntent).toEqual({
       surface: "path",
       matchValues: path?.matchValues(),
@@ -312,10 +316,89 @@ describe("describeBashPathGate", () => {
     )) as GateDescriptor;
 
     expect(result.decision.value).toBe(".env");
+    // `cat .env` is a bash *read*; B′ routes reads to the `path` surface.
     expect(result.sessionApproval?.surface).toBe("path");
     expect(result.sessionApproval?.representativePattern).toBe(
       "/test/project/*",
     );
+  });
+});
+
+// bash_path surface (redirect-to-source / bare-token denies) ────────────
+//
+// The gate resolves redirect-target and promoted bare tokens against the
+// `bash_path` surface — distinct from the cross-cutting `path` surface that
+// gates `edit`/`write`/`read` tools. A `bash_path` deny blocks `bash` redirects
+// to a source file without blocking `edit`/`write` to it, and without needing
+// a `path` rule (so existing `path`-only configs are unaffected — #58).
+describe("describeBashPathGate — bash_path surface", () => {
+  it("denies a redirect target matching a bash_path rule", async () => {
+    // `sed 's/a/b/' f > src/main.go` — the redirect target `src/main.go` is a
+    // path-rule candidate (it contains `/`, so the broad classifier accepts it
+    // without an existence probe); a `bash_path` deny on `*.go` blocks it.
+    const resolver = makePathDispatchResolver(
+      {
+        "src/main.go": makeCheckResult({
+          state: "deny",
+          matchedPattern: "*.go",
+        }),
+      },
+      makeCheckResult({ state: "allow" }),
+    );
+    const result = (await describeGate(
+      makeTcc({ input: { command: "sed 's/a/b/' f > src/main.go" } }),
+      resolver,
+    )) as GateDescriptor;
+
+    expect(isGateDescriptor(result)).toBe(true);
+    expect(result.preCheck?.state).toBe("deny");
+    expect(result.preCheck?.matchedPattern).toBe("*.go");
+    expect(result.decision.surface).toBe("bash_path");
+    expect(result.sessionApproval?.surface).toBe("bash_path");
+  });
+
+  it("surfaces a bash_path deny-with-reason on the descriptor", async () => {
+    const resolver = makePathDispatchResolver(
+      {
+        "src/main.go": makeCheckResult({
+          state: "deny",
+          matchedPattern: "*.go",
+          reason: "Use the edit tool, not bash redirects",
+        }),
+      },
+      makeCheckResult({ state: "allow" }),
+    );
+    const result = (await describeGate(
+      makeTcc({ input: { command: "echo x > src/main.go" } }),
+      resolver,
+    )) as GateDescriptor;
+
+    expect(result.preCheck?.state).toBe("deny");
+    expect(result.preCheck?.reason).toBe(
+      "Use the edit tool, not bash redirects",
+    );
+    expect(result.denialContext).toMatchObject({
+      kind: "bash_path",
+      reason: "Use the edit tool, not bash redirects",
+    });
+  });
+
+  it("returns null when no explicit bash_path rule matches (#58 compat)", async () => {
+    // A config with no `bash_path` key — the universal default fires for every
+    // token, so the gate skips (backward compatibility for path-only configs).
+    const resolver = makeResolver(
+      makeCheckResult({
+        state: "ask",
+        matchedPattern: undefined,
+        source: "special",
+        origin: "builtin",
+      }),
+    );
+    const result = await describeGate(
+      makeTcc({ input: { command: "echo x > main.go" } }),
+      resolver,
+    );
+    expect(result).toBeNull();
   });
 });
 
@@ -433,5 +516,212 @@ describe("describeBashPathGate — win32 backslash-relative paths", () => {
       resolver,
     );
     expect(result).toBeNull();
+  });
+});
+
+// B′ — redirect-scope + backward-compat fallback ─────────────────────────
+//
+// `bash_path` gates bash *writes* (file_redirect destinations); bash *reads*
+// (bare-filename arguments) resolve against the cross-cutting `path` surface.
+// A `bash_path` write with no explicit `bash_path` rule falls back to `path`,
+// so a `path`-only config keeps bash read+write protection (no silent regression).
+describe("describeBashPathGate — B′ redirect-scope + path fallback", () => {
+  // A redirect (write) token resolves against `bash_path`; a read (argument)
+  // token resolves against `path`. The per-surface stub distinguishes them so
+  // each route can be exercised independently.
+  function surfaceDispatchResolver(
+    bySurface: Record<string, ReturnType<typeof makeCheckResult>>,
+  ) {
+    const resolve = vi.fn<ScopedPermissionResolver["resolve"]>();
+    resolve.mockImplementation((intent) => {
+      if (intent.kind === "access-path") {
+        return bySurface[intent.surface] ?? makeCheckResult({ state: "allow" });
+      }
+      return makeCheckResult({ state: "allow" });
+    });
+    return { resolve };
+  }
+
+  it("routes a redirect (write) to bash_path and denies on a bash_path rule", async () => {
+    const resolver = surfaceDispatchResolver({
+      bash_path: makeCheckResult({
+        state: "deny",
+        matchedPattern: "*.go",
+        source: "special",
+        origin: "global",
+      }),
+    });
+    const result = (await describeGate(
+      makeTcc({ input: { command: "echo x > src/main.go" } }),
+      resolver,
+    )) as GateDescriptor;
+    expect(isGateDescriptor(result)).toBe(true);
+    expect(result.preCheck?.state).toBe("deny");
+    expect(result.surface).toBe("bash_path");
+    expect(result.decision.surface).toBe("bash_path");
+    expect(result.sessionApproval?.surface).toBe("bash_path");
+  });
+
+  it("routes a read (argument) to path, not bash_path", async () => {
+    // `cat src/main.go` is a read. A `bash_path` deny must NOT block it; a
+    // `path` deny DOES block it (the read resolves to `path`).
+    const resolver = surfaceDispatchResolver({
+      bash_path: makeCheckResult({
+        state: "deny",
+        matchedPattern: "*.go",
+        source: "special",
+        origin: "global",
+      }),
+      path: makeCheckResult({
+        state: "allow",
+        source: "special",
+        origin: "global",
+      }),
+    });
+    const result = await describeGate(
+      makeTcc({ input: { command: "cat src/main.go" } }),
+      resolver,
+    );
+    expect(result).toBeNull();
+  });
+
+  it("a read is denied by a path rule (read routes to path)", async () => {
+    const resolver = surfaceDispatchResolver({
+      path: makeCheckResult({
+        state: "deny",
+        matchedPattern: "*.go",
+        source: "special",
+        origin: "global",
+      }),
+    });
+    const result = (await describeGate(
+      makeTcc({ input: { command: "cat src/main.go" } }),
+      resolver,
+    )) as GateDescriptor;
+    expect(isGateDescriptor(result)).toBe(true);
+    expect(result.preCheck?.state).toBe("deny");
+    expect(result.surface).toBe("path");
+    expect(result.sessionApproval?.surface).toBe("path");
+  });
+
+  it("falls back to path for a write with no explicit bash_path rule (#58 + B′)", async () => {
+    // A `path`-only config (no `bash_path` key): a redirect write falls back
+    // from `bash_path` (no explicit rule) to `path`, which denies — so a
+    // path-only config keeps bash write protection (no silent regression).
+    const resolver = surfaceDispatchResolver({
+      bash_path: makeCheckResult({
+        state: "ask",
+        matchedPattern: undefined,
+        source: "special",
+        origin: "builtin",
+      }),
+      path: makeCheckResult({
+        state: "deny",
+        matchedPattern: "*.env",
+        source: "special",
+        origin: "global",
+      }),
+    });
+    const result = (await describeGate(
+      makeTcc({ input: { command: "echo secret > .env" } }),
+      resolver,
+    )) as GateDescriptor;
+    expect(isGateDescriptor(result)).toBe(true);
+    expect(result.preCheck?.state).toBe("deny");
+    // The fallback decided on `path`, so the descriptor/session-approval scope
+    // to `path` (a future write re-runs bash_path → fallback → path session rule).
+    expect(result.surface).toBe("path");
+    expect(result.sessionApproval?.surface).toBe("path");
+  });
+
+  it("a path-only config keeps a bash read denied (no silent regression)", async () => {
+    // Boundary regression: `cat .env` (read) under a `path`-only deny stays
+    // denied — the read routes to `path` directly.
+    const resolver = surfaceDispatchResolver({
+      path: makeCheckResult({
+        state: "deny",
+        matchedPattern: "*.env",
+        source: "special",
+        origin: "global",
+      }),
+    });
+    const result = (await describeGate(
+      makeTcc({ input: { command: "cat .env" } }),
+      resolver,
+    )) as GateDescriptor;
+    expect(isGateDescriptor(result)).toBe(true);
+    expect(result.preCheck?.state).toBe("deny");
+    expect(result.surface).toBe("path");
+  });
+
+  it("a `<` input-redirect routes the destination to path (read), not bash_path", async () => {
+    // P2: `cat < .env` is a read — the `.env` destination is tagged
+    // `argument`, so it resolves against `path` only. A `bash_path` deny must
+    // not block it.
+    const resolver = surfaceDispatchResolver({
+      bash_path: makeCheckResult({
+        state: "deny",
+        matchedPattern: "*.env",
+        source: "special",
+        origin: "global",
+      }),
+      path: makeCheckResult({
+        state: "allow",
+      }),
+    });
+    const result = await describeGate(
+      makeTcc({ input: { command: "cat < .env" } }),
+      resolver,
+    );
+    expect(result).toBeNull();
+  });
+
+  it("a `<` input-redirect is denied by a path deny (read routes to path)", async () => {
+    const resolver = surfaceDispatchResolver({
+      bash_path: makeCheckResult({
+        state: "allow",
+      }),
+      path: makeCheckResult({
+        state: "deny",
+        matchedPattern: "*.env",
+        source: "special",
+        origin: "global",
+      }),
+    });
+    const result = (await describeGate(
+      makeTcc({ input: { command: "cat < .env" } }),
+      resolver,
+    )) as GateDescriptor;
+    expect(isGateDescriptor(result)).toBe(true);
+    expect(result.preCheck?.state).toBe("deny");
+    expect(result.surface).toBe("path");
+  });
+
+  it("a `bash_path` catch-all allow does not bypass a path deny for a write", async () => {
+    // Headline B′ contract at the gate level: `bash_path: { "*": "allow" }` +
+    // `path: { "*.env": "deny" }` → `echo > .env` denied. The catch-all allow
+    // sets matchedPattern "*" but the path deny wins most-restrictive.
+    const resolver = surfaceDispatchResolver({
+      bash_path: makeCheckResult({
+        state: "allow",
+        matchedPattern: "*",
+        source: "special",
+        origin: "global",
+      }),
+      path: makeCheckResult({
+        state: "deny",
+        matchedPattern: "*.env",
+        source: "special",
+        origin: "global",
+      }),
+    });
+    const result = (await describeGate(
+      makeTcc({ input: { command: "echo secret > .env" } }),
+      resolver,
+    )) as GateDescriptor;
+    expect(isGateDescriptor(result)).toBe(true);
+    expect(result.preCheck?.state).toBe("deny");
+    expect(result.surface).toBe("path");
+    expect(result.preCheck?.matchedPattern).toBe("*.env");
   });
 });

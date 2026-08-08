@@ -393,6 +393,13 @@ A config whose top-level `*` is `"allow"` with no `bash` `*` policy lets every b
 To gate bash commands, add `"bash": { "*": "ask" }` (or `"deny"`).
 To deliberately opt into permissive bash, set `"bash": { "*": "allow" }` explicitly — that suppresses the warning.
 
+#### Raw-command match (heredoc bodies)
+
+`bash` patterns are matched two ways and the most restrictive wins (`deny` > `ask` > `allow`): each tree-sitter-decomposed command unit (so `cd X && npm install` is evaluated as `cd X` and `npm install` separately), and the **full raw command string**, heredoc bodies included.
+The raw match catches string-based workarounds the unit decomposition strips — a `python3 - <<'PY'\nopen()\nPY` heredoc body is invisible to the unit matcher (which sees bare `python3`), but the full command matches a `python3 *open(*` pattern.
+Every future string-based workaround (`tee`, `printf > file`, `dd of=…`) is catchable by a config pattern, with no per-workaround code.
+The wrapper floor (above) is still preserved: a wrapper unit floored to `ask` wins over a raw `allow`, and a raw `deny` wins over a wrapper `ask` (deny is the hard wall).
+
 ### `mcp` Surface
 
 MCP permissions match against derived targets from tool input:
@@ -449,7 +456,10 @@ Skill name patterns use `*` and `?` wildcards (note: surface is `skill`, not `sk
 
 ### `path` Surface
 
-Cross-cutting gate that applies to **all** file access — built-in Pi tools (`read`, `write`, `edit`, `find`, `grep`, `ls`), bash commands, MCP calls (via `input.arguments.path`), and extension tools (via `input.path` or a registered access extractor).
+Cross-cutting gate that applies to **tool** file access — built-in Pi tools (`read`, `write`, `edit`, `find`, `grep`, `ls`), MCP calls (via `input.arguments.path`), and extension tools (via `input.path` or a registered access extractor).
+Bash **writes** (redirect targets) are gated on the separate [`bash_path`](#bash_path-surface) surface, so a `path` rule does not also block bash redirects — keeping `path` denies off the bash redirect escape hatch.
+Bash **reads** (bare-filename arguments) route to the `path` surface, and a bash **write** resolves against **both** `bash_path` and `path` with the most restrictive winning (`deny` > `ask` > `allow`) — `bash_path` can only add restrictions, so a `path` deny always holds for bash writes and a `bash_path` catch-all allow does not bypass it.
+A `path`-only config keeps full bash read+write protection with no `bash_path` key.
 A `path` deny cannot be overridden by a per-tool allow.
 Extension and MCP path tools are gated by default — no registration needed — so a `path` deny protects sensitive files from every path-aware tool, not just the built-in six.
 
@@ -472,36 +482,30 @@ If it denies, the command is blocked without reaching subsequent gates — no wa
 
 Path patterns match both the path **as the agent references it** and its canonical (symlink-resolved) form, so a deny on a sensitive spelling cannot be evaded through a symlink alias (see Symlinked paths below).
 
-For bash commands, the extension extracts path-candidate tokens from the command (dot-files like `.env`, relative paths like `src/foo.ts`, and absolute paths) and evaluates each against the path rules.
-The most restrictive result across all tokens determines the outcome.
-When the current working directory is known, relative bash tokens are matched with cwd-normalized policy values, resolved against the effective directory after literal `cd` commands; a token after a non-literal `cd` (e.g. `cd "$DIR"`) stays conservative and matches only its literal form.
-
-A bare filename with no path shape at all (e.g. `id_rsa` in `cat id_rsa`) is also gated, provided it names a file that actually exists — so `"id_rsa": "deny"` or `"*.pem": "deny"` blocks the file whether it is referenced by a bare name, a relative path, or the `read` tool.
-Because the resolved path is matched, this covers a bare **symlink** whose target a rule names: with `".some.secret": "deny"`, `cat a_sym` is denied when `a_sym` points at `.some.secret`.
-A bare token that names nothing (e.g. `status` in `git status`, `build` in `npm run build`) is left alone, so ordinary subcommands and branch names never prompt.
-An existing file that matches no `path` rule is likewise left alone — the catch-all `"*"` entry alone does not gate it.
+When the current working directory is known, relative tool-path inputs are matched with their cwd-normalized absolute form, so `src/App.jsx` matches both `src/*` and `/workspace/project/*`.
 
 A path embedded in a long option (e.g. `--file=/tmp/patterns` in `grep --file=/tmp/patterns target`) is extracted and gated like any other path token; an option value that is not path-shaped (e.g. `--format=json`) is ignored.
 
-On Windows, where a backslash is a path separator, a backslash-relative bash argument (e.g. `dir\file` in `cat dir\file`) is gated by a `path` rule the same as its forward-slash equivalent (`dir/file`) and the same as the file accessed through the `read` tool.
+On Windows, where a backslash is a path separator, a backslash-relative path is gated the same as its forward-slash equivalent.
 On other platforms a backslash is a legal filename character, so such a token is not treated as a path.
 
-Four orthogonal layers compose with most-restrictive-wins:
+Five orthogonal layers compose with most-restrictive-wins:
 
-| Layer                   | Question                                | Applies to       |
-| ----------------------- | --------------------------------------- | ---------------- |
-| `path`                  | Is this specific path pattern allowed?  | All tools + bash |
-| `external_directory`    | Is accessing outside CWD ok?            | All tools + bash |
-| Per-tool patterns       | Is this path ok for this specific tool? | Individual tools |
-| `bash` command patterns | Is this command ok?                     | Bash only        |
+| Layer                   | Question                                     | Applies to              |
+| ----------------------- | -------------------------------------------- | ----------------------- |
+| `path`                  | Is this specific path pattern allowed?       | Tools + MCP + extension |
+| `external_directory`    | Is accessing outside CWD ok?                 | All tools + bash        |
+| `bash_path`             | Is this bash write-redirect pattern allowed? | Bash writes (redirects) |
+| Per-tool patterns       | Is this path ok for this specific tool?      | Individual tools        |
+| `bash` command patterns | Is this command ok?                          | Bash only               |
 
 **Which surface for "allow this directory"?**
-Use `path` to **deny** sensitive files everywhere (`.env`, `~/.ssh/*`); use `external_directory` to **allow** a directory outside the working tree (a cache, a sibling project).
+Use `path` to **deny** sensitive files from tools (`.env`, `~/.ssh/*`); use `external_directory` to **allow** a directory outside the working tree (a cache, a sibling project); use `bash_path` to **deny** bash write-redirects to source files without blocking `edit`/`write` (bash reads route to `path`, so a `path`-only config already protects bash reads+writes).
 Because the layers compose with most-restrictive-wins, a `path` allow cannot loosen an `external_directory: ask` boundary — `ask` is more restrictive than `allow`, so the prompt still fires.
 Adding `"~/.cargo/registry": "allow"` to the `path` surface therefore does **not** stop the outside-CWD prompt; put the rule on `external_directory` instead (see below).
 
 Configs without a `path` key behave identically to before — the gate does not fire.
-When no `path` key is present, the universal fallback (`permission["*"]`) applies: `"*": "allow"` keeps the gate transparent, while `"*": "deny"` would deny all file access via every surface including `path`.
+When no `path` key is present, the universal fallback (`permission["*"]`) applies: `"*": "allow"` keeps the gate transparent, while `"*": "deny"` would deny all tool file access via every surface including `path`.
 
 > **Ordering matters.**
 > Rules use last-match-wins.
@@ -525,8 +529,9 @@ Deny all env files but allow the example template:
 }
 ```
 
-This denies `.env`, `.env.local`, `.env.production`, and `src/.env`, but allows `.env.example`.
-Bash commands like `cat .env`, `cp .env .env.backup`, and `echo secret > .env` (redirect targets) are all caught.
+This denies `.env`, `.env.local`, `.env.production`, and `src/.env` (via `read`/`write`/`edit`), but allows `.env.example`.
+Bash access to `.env` is already covered by the same `path` rule: a bash **read** (`cat .env`) routes to `path`, and a bash **write** (`echo secret > .env`) resolves against both `bash_path` and `path` with the most restrictive winning — the `path` `*.env` deny holds, so no `bash_path` rule is needed to protect `.env` (a `bash_path: { "*": "allow" }` catch-all does not bypass it).
+Add a `bash_path` rule only to steer bash write-redirects away from source files you do *not* want to deny from `edit`/`write` (see the [`bash_path` Surface](#bash_path-surface) below).
 
 #### Composition with per-tool rules
 
@@ -543,6 +548,47 @@ Conversely, a per-tool deny still blocks even when the `path` surface allows:
 ```
 
 Here `read` calls pass the `path` gate but are blocked by the `read` tool gate.
+
+### `bash_path` Surface
+
+Gates bash **writes** — `file_redirect` destinations (`sed 's/a/b/' f > main.go`) — distinct from the tool `path` surface.
+A `bash_path` deny blocks bash from writing to a source file **without** blocking `edit`/`write` to that same file (those gate through `path`), so it closes the bash redirect-to-source escape hatch while steering the agent toward `edit`/`write`.
+Bash **reads** (bare-filename arguments that name an existing file, like `cat .env`) resolve against the `path` surface only, not `bash_path` — so a `bash_path` deny cannot block a bash read, and a `path`-only config already protects bash reads.
+A bash **write** resolves against **both** `bash_path` and `path`, and the most restrictive wins (`deny` > `ask` > `allow`) — `bash_path` can only **add** restrictions, so a `path` deny always holds for bash writes (a `bash_path: { "*": "allow" }` catch-all does **not** bypass it), and a `bash_path` deny still denies.
+With no `bash_path` key, the write falls through to the `path` result, so a `path`-only config also keeps bash write protection (no `bash_path` key needed).
+
+```jsonc
+{
+  "permission": {
+    "*": "allow",
+    "bash_path": {
+      "*": "allow",
+      "*.go": { "action": "deny", "reason": "Redirecting bash output to a .go file is blocked. Use the edit or write tool." },
+      "*.ts": { "action": "deny", "reason": "Redirecting bash output to a .ts file is blocked. Use the edit or write tool." }
+    }
+  }
+}
+```
+
+**Opt-in bash-only steering.**
+To deny a bash redirect to a file *without* denying `edit`/`write` to it, remove the matching `path` rule and add a `bash_path` rule for the same pattern.
+That decouples bash writes from the tool surface: `edit`/`write` (which gate through `path`) stay allowed while `echo > file` is blocked.
+Keeping the `path` rule instead denies both bash and tools — the default, protective choice.
+
+The gate extracts path-candidate tokens from the command and routes each by origin: a **write** (redirect destination for a write operator — `>`/`>>`/`&>`/`&>>`) resolves against **both** `bash_path` and `path`, most-restrictive-wins (`deny` > `ask` > `allow`); a **read** (a command argument, or a `<` input-redirect destination) resolves against `path` only.
+It returns the most restrictive result across all tokens.
+When the current working directory is known, relative tokens are matched with cwd-normalized policy values, resolved against the effective directory after literal `cd` commands; a token after a non-literal `cd` (e.g. `cd "$DIR"`) stays conservative and matches only its literal form.
+
+A bare filename with no path shape at all (e.g. `id_rsa` in `cat id_rsa`) is also gated, provided it names a file that actually exists — so `"id_rsa": "deny"` or `"*.pem": "deny"` blocks the file whether it is referenced by a bare name or a relative path.
+A bare-filename *read* like this resolves against `path`, so put the deny on `path` (or `bash_path`, which a write would hit); a bare-filename read is not caught by a `bash_path`-only rule.
+Because the resolved path is matched, this covers a bare **symlink** whose target a rule names: with `".some.secret": "deny"` on `path`, `cat a_sym` is denied when `a_sym` points at `.some.secret`.
+A bare token that names nothing (e.g. `status` in `git status`, `build` in `npm run build`) is left alone, so ordinary subcommands and branch names never prompt.
+A token whose deciding surface matched only the universal default (no explicit rule on either `bash_path` or `path`) is left alone — the catch-all `"*"` entry alone does not gate it (#58 backward compatibility: a config with no relevant key leaves the gate inert; a write with no `bash_path` and no `path` rule is unrestricted).
+
+On Windows, where a backslash is a path separator, a backslash-relative bash argument (e.g. `dir\file` in `cat dir\file`) is gated the same as its forward-slash equivalent (`dir/file`).
+On other platforms a backslash is a legal filename character, so such a token is not treated as a path.
+
+`bash_path` patterns match both the token as referenced and its canonical (symlink-resolved) form, and fold case and separators on Windows, just like `path`.
 
 ### `external_directory` Surface
 
@@ -624,7 +670,7 @@ Infrastructure directories include:
 
 Write tools (`write`, `edit`) to infrastructure paths are **not** auto-allowed and still go through the gate.
 
-On Windows, path matching for `external_directory`, `path`, and the path-bearing tools is case-insensitive and tolerant of either separator (`\` or `/`), matching the case-insensitive filesystem.
+On Windows, path matching for `external_directory`, `path`, `bash_path`, and the path-bearing tools is case-insensitive and tolerant of either separator (`\` or `/`), matching the case-insensitive filesystem.
 The separator folding applies to the rule pattern **and** to the value it is matched against, so either side may be written with either separator.
 A mixed-case allow override such as `~/AppData/Roaming/npm/node_modules/@earendil-works/pi-coding-agent/*` therefore matches a lowercased, backslash-normalized path value, and a forward-slash rule such as `"/dev/null"` matches a value that is also spelled with forward slashes.
 POSIX matching remains case-sensitive and does not fold separators.
@@ -632,7 +678,7 @@ POSIX matching remains case-sensitive and does not fold separators.
 #### Git Bash / MSYS paths on Windows
 
 On Windows, Pi executes bash commands through Git Bash, so a bash token that looks like a POSIX absolute path carries MSYS mount semantics rather than native `node:path.win32` semantics.
-The `external_directory` and `path` gates interpret bash tokens accordingly (tool-input paths for `read`/`write`/`edit` keep native Windows semantics, since those tools resolve them through Node's filesystem):
+The `external_directory`, `path`, and `bash_path` gates interpret bash tokens accordingly (tool-input paths for `read`/`write`/`edit` keep native Windows semantics, since those tools resolve them through Node's filesystem):
 
 - The safe device paths (`/dev/null`, `/dev/stdin`, `/dev/stdout`, `/dev/stderr`) are recognized as MSYS devices rather than filesystem paths, so they never trigger the `external_directory` gate — the same exclusion that holds on POSIX.
   The cross-cutting `path` surface still governs them on both platforms: if a `path` rule matches the token, it decides.
@@ -841,9 +887,8 @@ It allows a curated set of commands whose only effect is to read or report — n
 
 Four existing behaviors keep this allowlist safe — you do not have to enumerate the destructive commands to block them:
 
-1. **Redirects are gated by the `path` surface, not `bash`.**
-   Allowing `cat *` allows the `cat` command, not a redirect it carries: `cat secret > out.txt` writes `out.txt` through the `path`/`external_directory` gate.
-   That is why this recipe ships with `write` and `edit` denied and a `path` deny block for sensitive files.
+1. **Redirects are gated by the `bash_path`/`path` surface, not `bash`.**
+   Allowing `cat *` allows the `cat` command, not a redirect it carries: `cat secret > out.txt` writes `out.txt` through the `bash_path` gate (a bash **write**), which resolves against **both** `bash_path` and `path` with the most restrictive winning (`deny` > `ask` > `allow`) — a `path` deny always holds for the write, so no explicit `bash_path` rule is needed to stop it. (The CWD-boundary `external_directory` gate is a separate layer, not a `bash_path` fallback.) That is why this recipe ships with `write` and `edit` denied and a `path` deny block for sensitive files.
    Keep the `path` surface locked down for anything you would not want an allowed read command to overwrite via `>`.
 2. **`find`/`fd` with an exec flag are floored to `ask`.**
    A bare `find *` search is read-only, so it is safe to allow; the moment an exec flag appears (`find -exec`/`-execdir`/`-ok`/`-okdir`, `fd -x`/`-X`), the [indirection-wrapper floor](#fail-closed-behavior) clamps the decision back to `ask`.

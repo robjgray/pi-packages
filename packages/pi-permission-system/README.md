@@ -17,7 +17,7 @@ Permission enforcement extension for the [Pi](https://pi.mariozechner.at/) codin
 - **Enforces allow / ask / deny** at tool-call time with UI confirmation dialogs
 - **Controls bash commands** with wildcard pattern matching (`git *: ask`, `rm -rf *: deny`)
 - **Gates MCP and skill access** at server, tool, and skill-name granularity
-- **Protects sensitive file patterns** — cross-cutting `path` rules deny `.env`, `~/.ssh/*`, etc. across all tools and bash at once, matching both the path as referenced and its symlink-resolved form so a deny cannot be evaded through a symlink alias
+- **Protects sensitive file patterns** — cross-cutting `path` rules deny `.env`, `~/.ssh/*`, etc. across all tools at once, matching both the path as referenced and its symlink-resolved form so a deny cannot be evaded through a symlink alias; the separate `bash_path` surface denies bash **writes** (redirect targets) to source files without blocking `edit`/`write` (bash **reads** route to `path`, so a `path`-only config keeps full bash protection)
 - **Guards external paths** — prompts before file tools or bash commands reach outside `cwd`
 - **Fails closed** — an internal gate error blocks the tool (with a `gate_error` review-log entry), and an unparseable bash command — or an indirection wrapper that hides the gated command (`bash -c`/`eval`, `sudo`, `env`, `xargs`, `find -exec`, …) — prompts (`ask`) rather than passing silently
 - **Forwards prompts from subagents** — `ask` policies work even in non-UI execution contexts
@@ -69,8 +69,11 @@ In an interactive TUI session the prompt is an inline keybind dialog — `y` app
 Pi's tool-expansion binding (`app.tools.expand`, `Ctrl+O` by default) keeps working while the dialog is open, so you can expand a truncated tool preview before deciding.
 See [docs/configuration.md](docs/configuration.md#inline-permission-dialog-tui) for the hotkeys and [docs/session-approvals.md](docs/session-approvals.md) for session-scoped rules and pattern suggestions.
 
-The `path` surface is a cross-cutting gate that applies to **all** file access — Pi tools, bash commands, MCP calls, and extension tools alike.
+The `path` surface is a cross-cutting gate that applies to **tool** file access — Pi tools (`read`/`write`/`edit`/`find`/`grep`/`ls`), MCP calls, and extension tools alike.
 Extension and MCP tools that operate on paths (via `input.path`, MCP's `input.arguments.path`, or a registered access extractor) are gated by default, so a `path` deny cannot be overridden by a per-tool allow — making it the right place to protect sensitive files like `.env` or `~/.ssh/*` from every tool at once.
+Bash **writes** (redirect targets) are gated on the separate `bash_path` surface (below) so a `path` rule does not also block bash redirects — keeping `path` denies off the bash redirect escape hatch.
+Bash **reads** (bare-filename arguments like `cat .env`) route to the `path` surface, and a bash **write** resolves against **both** `bash_path` and `path` with the most restrictive winning (`deny` > `ask` > `allow`) — `bash_path` can only add restrictions, so a `path` deny always holds for bash writes and a `bash_path` catch-all allow does not bypass it.
+A `path`-only config keeps full bash read+write protection with no `bash_path` key.
 A `path` pattern matches both the path as the agent references it and its canonical (symlink-resolved) form, so a deny still fires when a symlink aliases a sensitive target.
 
 For per-tool path patterns (`read`, `write`, `edit`, `find`, `grep`, `ls`), patterns are matched against the file path from `input.path`.
@@ -94,8 +97,59 @@ This is the right surface for silencing repeated prompts on a local cache like `
 
 The trailing `*` is greedy and crosses subdirectory boundaries, so it allows every file beneath the directory; a bare `~/.cargo/registry` matches only the directory entry itself.
 
-Four layers compose with most-restrictive-wins: `path` (cross-cutting) → `external_directory` (CWD boundary) → per-tool patterns → `bash` command patterns.
+The `bash_path` surface gates bash **writes** — `file_redirect` destinations (`sed 's/a/b/' f > main.go`) — distinct from the tool `path` surface so a `bash_path` deny blocks bash from writing to a source file **without** blocking `edit`/`write` to that same file.
+A bash **write** resolves against **both** `bash_path` and `path`, and the most restrictive wins (`deny` > `ask` > `allow`) — `bash_path` can only **add** restrictions, so a `path` deny always holds for bash writes, and a `bash_path: { "*": "allow" }` catch-all does **not** bypass a `path` deny.
+A `bash_path` deny still denies (more restrictive).
+Bash **reads** (bare-filename arguments that name an existing file, like `cat .env`) resolve against the `path` surface only, not `bash_path`, so a `bash_path` deny cannot block a bash read.
+Use `bash_path` to close the bash redirect-to-source escape hatch while steering the agent toward `edit`/`write`:
+
+```jsonc
+{
+  "permission": {
+    "*": "allow",
+    "bash_path": {
+      "*": "allow",
+      "*.go": { "action": "deny", "reason": "Redirecting bash output to a .go source file is blocked. Use the edit or write tool." },
+      "*.ts": { "action": "deny", "reason": "Redirecting bash output to a .ts source file is blocked. Use the edit or write tool." }
+    }
+  }
+}
+```
+
+A `bash_path` rule matches both the token as referenced and its canonical (symlink-resolved) form, and on Windows folds case and separators, just like `path`.
+With no `bash_path` key, bash writes still resolve against `path` (the most-restrictive composition falls through to the `path` result) and bash reads route to `path`, so a `path`-only config keeps full bash protection (no `bash_path` key needed — a true `feat` minor, no migration for protection).
+
+**Opt-in bash-only steering.**
+To deny a bash redirect to a file *without* denying `edit`/`write` to it, remove the matching `path` rule and add a `bash_path` rule for the same pattern — that decouples bash writes from the tool surface so `edit`/`write` (which gate through `path`) stay allowed while `echo > file` is blocked.
+
+### Bash command patterns — full raw command match
+
+`bash` command patterns are matched two ways and the most restrictive wins (`deny` > `ask` > `allow`):
+
+- each tree-sitter-decomposed command unit (so `cd X && npm install` is evaluated as `cd X` and `npm install` separately), and
+- the **full raw command string**, heredoc bodies included.
+
+The raw match catches string-based workarounds the unit decomposition strips — a `python3 - <<'PY'\nopen()\nPY` heredoc body is invisible to the unit matcher (which sees bare `python3`), but the full command matches a `python3 *open(*` pattern.
+A command that parses to zero units (a parse anomaly or an opaque program) is also raw-matched, so a `deny` pattern catches its raw string; otherwise it fails closed to `ask` so a permissive top-level `*` cannot silently allow an unparseable command.
+Every future string-based workaround (`tee`, `printf > file`, `dd of=…`) is catchable by a config pattern, with no per-workaround code.
+A wrapper unit (`bash -c`/`eval`, `sudo`/`env`/`xargs`/…) is still floored to `ask` even when the raw command is `allow`, so the floor is preserved (`pickMostRestrictive` composes them: a raw `deny` beats a wrapper `ask`, and a wrapper `ask` beats a raw `allow`).
+
+### Steering the agent toward `edit`/`read`/`write` (the prevention layer)
+
+For a hard stop, the `bash` and `bash_path` denies above block the file-mutation escape hatches with a reason naming the tool to use.
+For the soft nudge, append a global system-prompt drop-in at `~/.pi/agent/APPEND_SYSTEM.md` so the agent reaches for `edit`/`read`/`write` before `bash`:
+
+```markdown
+# File operations
+
+To modify file contents, use `edit` (fuzzy + shape-recovered) or `write` (full rewrite). Do not edit files via `python3`/`sed`/`awk` inside `bash` — those calls are blocked. For repeated changes to the same file, prefer `edit` over re-`write`ing. For content search, use the built-in `grep` tool, not `bash grep`.
+```
+
+The two close the loop from both sides: the system prompt says "use `edit`/`read`/`write`" *before* the model reaches for `bash`, and the permission deny says it again *if* the model tries `bash` anyway.
+
+Five layers compose with most-restrictive-wins: `path` (tools + bash reads) `→` `external_directory` (CWD boundary) `→` `bash_path` (bash writes) `→` per-tool patterns `→` `bash` command patterns.
 Because `ask` is more restrictive than `allow`, a `path` allow cannot loosen an `external_directory: ask` boundary — allow outside-CWD directories on `external_directory`.
+A `bash_path` deny is independent of `path`: it blocks the bash redirect without blocking `edit`/`write` to the same file (those gate through `path`).
 See [docs/configuration.md](docs/configuration.md) for the full recipe.
 
 ## Configuration

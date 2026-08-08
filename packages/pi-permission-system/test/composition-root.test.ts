@@ -801,6 +801,194 @@ describe("bash bare-token path gating (#509, #645)", () => {
   });
 });
 
+describe("bash_path catch-all allow does not bypass a path deny (B′ most-restrictive)", () => {
+  // The headline B′ contract: a `bash_path: { "*": "allow" }` catch-all must
+  // NOT bypass a `path` deny for the same file. Writes are the most
+  // restrictive of `bash_path` and `path` — `bash_path` can only add
+  // restrictions, so a `path` deny always holds for bash writes. The shipped
+  // `config.example.json` (and the README example) both use the catch-all, so
+  // this is the regression that would silently unprotect `.env`.
+  async function fireBashToolCall(
+    pi: ReturnType<typeof makeFakePi>,
+    ctx: unknown,
+    command: string,
+  ): Promise<{ block?: true; reason?: string }> {
+    return (await pi.fire(
+      "tool_call",
+      { name: "bash", input: { command }, toolCallId: "tc-1" },
+      ctx,
+    )) as { block?: true; reason?: string };
+  }
+
+  it("denies `echo secret > .env` under a path deny + bash_path catch-all allow", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "pi-perm-bprime-cwd-"));
+    writeGlobalConfig({
+      permission: {
+        "*": "allow",
+        path: { "*.env": "deny" },
+        bash_path: { "*": "allow" },
+      },
+    });
+
+    const pi = makeFakePi({ events: createEventBus() });
+    piPermissionSystemExtension(pi as unknown as ExtensionAPI);
+    const ctx = makeChildCtx(cwd, "bprime-catchall-session");
+    await fireSessionStart(pi, ctx);
+
+    const result = await fireBashToolCall(pi, ctx, "echo secret > .env");
+    expect(result.block).toBe(true);
+
+    rmSync(cwd, { recursive: true, force: true });
+  });
+
+  it("denies `echo secret > .env` under a path deny with no bash_path key (fallback still denies)", async () => {
+    // A `path`-only config (no `bash_path` key) keeps bash write protection:
+    // the write resolves against `bash_path` (universal default) AND `path`
+    // (the `*.env` deny), and the deny wins.
+    const cwd = mkdtempSync(join(tmpdir(), "pi-perm-bprime-nobp-cwd-"));
+    writeGlobalConfig({
+      permission: { "*": "allow", path: { "*.env": "deny" } },
+    });
+
+    const pi = makeFakePi({ events: createEventBus() });
+    piPermissionSystemExtension(pi as unknown as ExtensionAPI);
+    const ctx = makeChildCtx(cwd, "bprime-nobp-session");
+    await fireSessionStart(pi, ctx);
+
+    const result = await fireBashToolCall(pi, ctx, "echo secret > .env");
+    expect(result.block).toBe(true);
+
+    rmSync(cwd, { recursive: true, force: true });
+  });
+
+  it("denies a bash redirect to *.go under a bash_path deny (no path *.go rule)", async () => {
+    // A `bash_path` deny adds a restriction even when `path` allows: `echo >
+    // src/main.go` is denied, while `edit` to the same file (gating through
+    // `path`) stays allowed.
+    const cwd = mkdtempSync(join(tmpdir(), "pi-perm-bprime-go-cwd-"));
+    writeGlobalConfig({
+      permission: { "*": "allow", bash_path: { "*.go": "deny" } },
+    });
+
+    const pi = makeFakePi({ events: createEventBus() });
+    piPermissionSystemExtension(pi as unknown as ExtensionAPI);
+    const ctx = makeChildCtx(cwd, "bprime-go-session");
+    await fireSessionStart(pi, ctx);
+
+    const result = await fireBashToolCall(pi, ctx, "echo x > src/main.go");
+    expect(result.block).toBe(true);
+
+    rmSync(cwd, { recursive: true, force: true });
+  });
+
+  it("does not block `cat src/main.go` (read) under a bash_path deny", async () => {
+    // Reads route to `path` only, so a `bash_path` deny cannot block a bash
+    // read. With no `path` rule for `*.go`, `cat src/main.go` is unrestricted.
+    const cwd = mkdtempSync(join(tmpdir(), "pi-perm-bprime-read-cwd-"));
+    writeGlobalConfig({
+      permission: { "*": "allow", bash_path: { "*.go": "deny" } },
+    });
+
+    const pi = makeFakePi({ events: createEventBus() });
+    piPermissionSystemExtension(pi as unknown as ExtensionAPI);
+    const ctx = makeChildCtx(cwd, "bprime-read-session");
+    await fireSessionStart(pi, ctx);
+
+    const result = await fireBashToolCall(pi, ctx, "cat src/main.go");
+    expect(result.block).toBeUndefined();
+
+    rmSync(cwd, { recursive: true, force: true });
+  });
+});
+
+describe("bash input-redirect is a read, not a write (P2)", () => {
+  // `<` (and `<&`, `<<<`) opens the destination for input — a bash *read* — so
+  // the destination routes to `path`, not `bash_path`. A `bash_path` deny must
+  // not block `cat < .env`.
+  async function fireBashToolCall(
+    pi: ReturnType<typeof makeFakePi>,
+    ctx: unknown,
+    command: string,
+  ): Promise<{ block?: true; reason?: string }> {
+    return (await pi.fire(
+      "tool_call",
+      { name: "bash", input: { command }, toolCallId: "tc-1" },
+      ctx,
+    )) as { block?: true; reason?: string };
+  }
+
+  it("does not block `cat < .env` under a bash_path deny (read routes to path)", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "pi-perm-inred-cwd-"));
+    writeGlobalConfig({
+      permission: { "*": "allow", bash_path: { "*.env": "deny" } },
+    });
+
+    const pi = makeFakePi({ events: createEventBus() });
+    piPermissionSystemExtension(pi as unknown as ExtensionAPI);
+    const ctx = makeChildCtx(cwd, "inred-bp-session");
+    await fireSessionStart(pi, ctx);
+
+    const result = await fireBashToolCall(pi, ctx, "cat < .env");
+    expect(result.block).toBeUndefined();
+  });
+
+  it("denies `cat < .env` under a path deny (read routes to path)", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "pi-perm-inred-path-cwd-"));
+    writeGlobalConfig({
+      permission: { "*": "allow", path: { "*.env": "deny" } },
+    });
+
+    const pi = makeFakePi({ events: createEventBus() });
+    piPermissionSystemExtension(pi as unknown as ExtensionAPI);
+    const ctx = makeChildCtx(cwd, "inred-path-session");
+    await fireSessionStart(pi, ctx);
+
+    const result = await fireBashToolCall(pi, ctx, "cat < .env");
+    expect(result.block).toBe(true);
+
+    rmSync(cwd, { recursive: true, force: true });
+  });
+});
+
+describe("shipped config.example.json protects .env from bash writes (P5)", () => {
+  // The shipped example config uses `bash_path: { "*": "allow" }` plus a `path`
+  // `*.env`/`*.env.*` deny. With the most-restrictive composition, the catch-all
+  // allow does NOT bypass the `path` deny — so `echo secret > .env` is blocked
+  // under the example config exactly as shipped.
+  async function fireBashToolCall(
+    pi: ReturnType<typeof makeFakePi>,
+    ctx: unknown,
+    command: string,
+  ): Promise<{ block?: true }> {
+    return (await pi.fire(
+      "tool_call",
+      { name: "bash", input: { command }, toolCallId: "tc-1" },
+      ctx,
+    )) as { block?: true };
+  }
+
+  it("denies `echo secret > .env` under config.example.json", async () => {
+    const example = JSON.parse(
+      readFileSync(
+        join(process.cwd(), "config", "config.example.json"),
+        "utf8",
+      ),
+    );
+    writeGlobalConfig(example);
+
+    const cwd = mkdtempSync(join(tmpdir(), "pi-perm-excfg-cwd-"));
+    const pi = makeFakePi({ events: createEventBus() });
+    piPermissionSystemExtension(pi as unknown as ExtensionAPI);
+    const ctx = makeChildCtx(cwd, "example-config-session");
+    await fireSessionStart(pi, ctx);
+
+    const result = await fireBashToolCall(pi, ctx, "echo secret > .env");
+    expect(result.block).toBe(true);
+
+    rmSync(cwd, { recursive: true, force: true });
+  });
+});
+
 describe("multi-instance global service interplay", () => {
   // The fix (#302) scopes the process-global service slot to the publishing
   // instance. The parent publishes at its session_start; an in-process child

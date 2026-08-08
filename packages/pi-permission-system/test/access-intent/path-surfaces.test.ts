@@ -43,6 +43,7 @@ describe("PATH_SURFACES", () => {
       "ls",
       "external_directory",
       "path",
+      "bash_path",
     ]) {
       expect(PATH_SURFACES.has(surface)).toBe(true);
     }
@@ -51,5 +52,12 @@ describe("PATH_SURFACES", () => {
   test("does not contain bash or mcp", () => {
     expect(PATH_SURFACES.has("bash")).toBe(false);
     expect(PATH_SURFACES.has("mcp")).toBe(false);
+  });
+
+  // B′: `bash_path` is a path surface so its patterns fold case/separators on
+  // Windows and use last-match-wins-across-aliases (evaluateAnyValue) rather
+  // than evaluateFirst — the same path semantics as `path` and the tools.
+  test("contains bash_path (win32 fold + last-match-wins-across-aliases)", () => {
+    expect(PATH_SURFACES.has("bash_path")).toBe(true);
   });
 });

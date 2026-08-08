@@ -33,10 +33,13 @@ import type { PermissionCheckResult } from "#src/types";
  * When `commands` is empty there are two cases. A trivially-empty command (an
  * empty, whitespace-only, or comment-only line) has genuinely nothing to gate,
  * so the whole `command` is resolved as before. A non-empty command that parsed
- * to zero command units (a parse anomaly or an opaque program) fails closed to
- * a synthetic `ask` so a permissive top-level `*` cannot silently allow an
- * unparseable command (e.g. `cd /repo && git push` riding a top-level allow on
- * the empty-parse path) — #452.
+ * to zero command units (a parse anomaly or an opaque program) is raw-matched
+ * on the `bash` surface: a real `deny` or `ask` rule (one whose
+ * `matchedPattern` is not the universal default) is surfaced so the agent sees
+ * the offending pattern, and only the universal default (or an allow) fails
+ * closed to a synthetic `ask` so a permissive top-level `*` cannot silently
+ * allow an unparseable command (e.g. `cd /repo && git push` riding a top-level
+ * allow on the empty-parse path) — #452.
  *
  * Pure and synchronous: the (async, tree-sitter) parse happens once in the
  * handler, which passes the decomposed `commands` here.
@@ -65,6 +68,28 @@ export function resolveBashCommandCheck(
         agentName,
       });
     }
+    // A non-empty command that parsed to zero units (a parse anomaly or an
+    // opaque program) still gets a raw-command resolve on the `bash` surface
+    // so a `deny`/`ask` pattern catches the unparseable command's raw string
+    // (B′: heredoc bodies and other string-based workarounds the unit
+    // decomposition strips). A raw `deny` is the hard wall and is returned; a
+    // raw `ask` whose `matchedPattern` is a real rule (not the universal
+    // default) is returned too so the agent sees the offending pattern. Only
+    // when no real rule matched (universal default, or an allow) does the
+    // fail-closed `ask` floor apply so a permissive top-level `*` cannot
+    // silently allow an unparseable command (#452).
+    const rawCheck = resolver.resolve({
+      kind: "tool",
+      surface: "bash",
+      input: { command },
+      agentName,
+    });
+    if (
+      (rawCheck.state === "deny" || rawCheck.state === "ask") &&
+      rawCheck.matchedPattern !== undefined
+    ) {
+      return rawCheck;
+    }
     return {
       state: "ask",
       toolName: "bash",
@@ -92,15 +117,17 @@ export function resolveBashCommandCheck(
         : base;
     return cmd.context ? { ...result, commandContext: cmd.context } : result;
   });
-  return (
-    pickMostRestrictive(results) ??
-    resolver.resolve({
-      kind: "tool",
-      surface: "bash",
-      input: { command },
-      agentName,
-    })
-  );
+  // Resolve the full raw command (heredoc body included) on the `bash` surface
+  // and fold it into the pool so a `bash` pattern can match the entire command
+  // string, not just the decomposed units — catching heredoc bodies and other
+  // string-based workarounds the tree-sitter enumeration strips.
+  const rawCheck = resolver.resolve({
+    kind: "tool",
+    surface: "bash",
+    input: { command },
+    agentName,
+  });
+  return pickMostRestrictive([...results, rawCheck]) ?? rawCheck;
 }
 
 /**

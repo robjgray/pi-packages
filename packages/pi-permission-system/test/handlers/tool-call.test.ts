@@ -229,7 +229,7 @@ describe("handleToolCall — path gate (tools)", () => {
 // ── bash path gate ────────────────────────────────────────────────────────
 
 describe("handleToolCall — bash path gate", () => {
-  it("blocks a bash command accessing .env when path surface denies", async () => {
+  it("blocks a bash read accessing .env when the path surface denies (read routes to path)", async () => {
     const { handler } = makeHandler({
       session: {
         checkPermission: makeSurfaceCheck({
@@ -241,6 +241,82 @@ describe("handleToolCall — bash path gate", () => {
     const event = makeToolCallEvent("bash", { input: { command: "cat .env" } });
     const result = await handler.handleToolCall(event, makeCtx());
     expect(result).toMatchObject({ action: "block" });
+  });
+
+  it("does not block a bash read when only bash_path denies (reads route to path)", async () => {
+    // B′: a `bash_path` deny gates bash *writes* (redirects), not reads. A bare
+    // `cat main.go` read resolves against `path`, so a `bash_path`-only deny
+    // must not block it (and must not block `edit`/`write` either).
+    const { handler } = makeHandler({
+      session: {
+        checkPermission: makeSurfaceCheck({
+          bash_path: { state: "deny", matchedPattern: "*.go" },
+        }),
+      },
+      tools: ["bash"],
+    });
+    const event = makeToolCallEvent("bash", {
+      input: { command: "cat src/main.go" },
+    });
+    const result = await handler.handleToolCall(event, makeCtx());
+    expect(result).toEqual({ action: "allow" });
+  });
+
+  it("blocks a bash redirect to *.go under bash_path deny, with a reason", async () => {
+    const { handler } = makeHandler({
+      session: {
+        checkPermission: makeSurfaceCheck({
+          bash_path: {
+            state: "deny",
+            matchedPattern: "*.go",
+            reason: "Use the edit tool, not bash redirects",
+          },
+        }),
+      },
+      tools: ["bash"],
+    });
+    const event = makeToolCallEvent("bash", {
+      input: { command: "sed 's/a/b/' f > src/main.go" },
+    });
+    const result = await handler.handleToolCall(event, makeCtx());
+    expect(result).toMatchObject({ action: "block" });
+    expect(String((result as { reason?: unknown }).reason)).toContain(
+      "Use the edit tool, not bash redirects",
+    );
+  });
+});
+
+describe("handleToolCall — bash_path deny does not block edit/write (distinct surface)", () => {
+  it("allows an edit to *.go under a bash_path deny (edit gates through path)", async () => {
+    const { handler } = makeHandler({
+      session: {
+        checkPermission: makeSurfaceCheck({
+          bash_path: { state: "deny", matchedPattern: "*.go" },
+        }),
+      },
+      tools: ["edit"],
+    });
+    const event = makeToolCallEvent("edit", {
+      input: { path: "main.go", edits: [] },
+    });
+    const result = await handler.handleToolCall(event, makeCtx());
+    expect(result).toEqual({ action: "allow" });
+  });
+
+  it("allows a write to *.go under a bash_path deny (write gates through path)", async () => {
+    const { handler } = makeHandler({
+      session: {
+        checkPermission: makeSurfaceCheck({
+          bash_path: { state: "deny", matchedPattern: "*.go" },
+        }),
+      },
+      tools: ["write"],
+    });
+    const event = makeToolCallEvent("write", {
+      input: { path: "main.go", content: "x" },
+    });
+    const result = await handler.handleToolCall(event, makeCtx());
+    expect(result).toEqual({ action: "allow" });
   });
 });
 
